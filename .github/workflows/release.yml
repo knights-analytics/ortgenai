@@ -102,5 +102,6 @@ jobs:
           path: ./artifacts/libonnxruntime-genai-linux-x64.so
       - uses: ncipollo/release-action@v1
         with:
+          artifacts: "libonnxruntime-genai-linux-x64.so"
           generateReleaseNotes: true
           skipIfReleaseExists: true
