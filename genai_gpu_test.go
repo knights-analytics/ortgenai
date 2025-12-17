@@ -52,26 +52,20 @@ func TestGenerationGPU(t *testing.T) {
 	var firstSequenceOutput []string
 	var secondSequenceOutput []string
 
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for delta := range generateChan {
-			switch delta.Sequence {
-			case 0:
-				firstSequenceOutput = append(firstSequenceOutput, delta.Tokens)
-			case 1:
-				secondSequenceOutput = append(secondSequenceOutput, delta.Tokens)
-			}
+	for token := range generateChan {
+		switch token.Sequence {
+		case 0:
+			firstSequenceOutput = append(firstSequenceOutput, token.Tokens)
+		case 1:
+			secondSequenceOutput = append(secondSequenceOutput, token.Tokens)
 		}
-	}()
-	// Wait for either completion or an error
-	select {
-	case <-done:
-	case err := <-errChan:
+	}
+	for err := range errChan {
 		if err != nil {
 			t.Fatalf("generation error: %v", err)
 		}
 	}
+
 	fmt.Printf("[GPU] First sequence output: %s", strings.Join(firstSequenceOutput, "")+"\n")
 	fmt.Printf("[GPU] Second sequence output: %s", strings.Join(secondSequenceOutput, "")+"\n")
 
