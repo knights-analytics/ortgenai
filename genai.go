@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 	"unsafe"
@@ -361,6 +362,9 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 			s.statistics.runStart = time.Time{}
 		}()
 
+		firstEmitted := make([]bool, len(messages))
+		lastChar := make([]rune, len(messages))
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -394,6 +398,21 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 				if decoded == "" {
 					continue
 				}
+
+				// some normalization: skip leading spaces for first token, avoid repeated periods at the end.
+				if !firstEmitted[i] {
+					trim := strings.TrimLeft(decoded, " ")
+					if trim == "" {
+						continue
+					}
+					decoded = trim
+					firstEmitted[i] = true
+				}
+				if decoded == "." && lastChar[i] == '.' {
+					continue
+				}
+				r := []rune(decoded)
+				lastChar[i] = r[len(r)-1]
 
 				// stats
 				if s.statistics.runFirstTokenTimes[i].IsZero() {
