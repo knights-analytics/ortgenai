@@ -8,9 +8,11 @@ import "C"
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -76,6 +78,17 @@ func (g *generator) destroy() {
 	g.generatorPtr = nil
 	C.DestroyOgaGeneratorParams(g.generatorParamsPtr)
 	g.generatorParamsPtr = nil
+}
+
+func (g *generator) setInputs(namedTensors *NamedTensors) error {
+	if namedTensors == nil || namedTensors.tensorsPtr == nil {
+		return errors.New("named tensors is nil")
+	}
+	res := C.GeneratorSetInputs(g.generatorPtr, namedTensors.tensorsPtr)
+	if err := OgaResultToError(res); err != nil {
+		return fmt.Errorf("GeneratorSetInputs failed: %w", err)
+	}
+	return nil
 }
 
 type tokenizer struct {
@@ -158,12 +171,63 @@ type SequenceDelta struct {
 	Tokens   string
 }
 
+// Images represents a collection of loaded images for multimodal processing
+type Images struct {
+	imagesPtr *C.OgaImages
+}
+
+func (i *Images) destroy() {
+	if i.imagesPtr != nil {
+		C.DestroyOgaImages(i.imagesPtr)
+	}
+	i.imagesPtr = nil
+}
+
+// Destroy releases the images resources
+func (i *Images) Destroy() {
+	i.destroy()
+}
+
+// MultiModalProcessor processes images and text together for multimodal models
+type MultiModalProcessor struct {
+	processorPtr *C.OgaMultiModalProcessor
+}
+
+func (p *MultiModalProcessor) destroy() {
+	if p.processorPtr != nil {
+		C.DestroyOgaMultiModalProcessor(p.processorPtr)
+	}
+	p.processorPtr = nil
+}
+
+// Destroy releases the processor resources
+func (p *MultiModalProcessor) Destroy() {
+	p.destroy()
+}
+
+// NamedTensors represents a collection of named tensor inputs
+type NamedTensors struct {
+	tensorsPtr *C.OgaNamedTensors
+}
+
+func (nt *NamedTensors) destroy() {
+	if nt.tensorsPtr != nil {
+		C.DestroyOgaNamedTensors(nt.tensorsPtr)
+	}
+	nt.tensorsPtr = nil
+}
+
+// Destroy releases the named tensors resources
+func (nt *NamedTensors) Destroy() {
+	nt.destroy()
+}
+
 // Statistics captures generation performance metrics.
 type Statistics struct {
 	AvgPrefillSeconds float64
 	TokensPerSecond   float64
 	// cumulative
-	CumulativePrefillSum   float64
+	CumulativePrefillSum           float64
 	CumulativePrefillCount         int
 	CumulativeTokens               int
 	CumulativeTokenDurationSeconds float64
@@ -172,6 +236,11 @@ type Statistics struct {
 // GetStatistics returns the last computed statistics for the session.
 func (s *Session) GetStatistics() Statistics {
 	return s.statistics
+}
+
+// GetModel returns the underlying model for creating multimodal processors
+func (s *Session) GetModel() *model {
+	return s.model
 }
 
 func (g *generator) IsDone() bool {
@@ -430,6 +499,187 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 	return outputChan, errChan, nil
 }
 
+// GenerateWithTensors generates text using pre-processed named tensors (for multimodal inputs)
+func (s *Session) GenerateWithTensors(ctx context.Context, namedTensors *NamedTensors, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
+	s.mutex.Lock()
+
+	if namedTensors == nil || namedTensors.tensorsPtr == nil {
+		return nil, nil, errors.New("named tensors is nil")
+	}
+
+	if generationOptions == nil {
+		generationOptions = &GenerationOptions{
+			MaxLength: 2024,
+			BatchSize: 1,
+		}
+	}
+	if generationOptions.BatchSize <= 0 {
+		generationOptions.BatchSize = 1
+	}
+
+	// Create generator params
+	var cGeneratorParams *C.OgaGeneratorParams
+	res := C.CreateOgaGeneratorParams(s.model.modelPtr, &cGeneratorParams)
+	if err := OgaResultToError(res); err != nil {
+		return nil, nil, fmt.Errorf("CreateOgaGeneratorParams failed: %w", err)
+	}
+	if cGeneratorParams == nil {
+		return nil, nil, errors.New("CreateOgaGeneratorParams returned nil")
+	}
+
+	maxLengthName := C.CString("max_length")
+	defer C.free(unsafe.Pointer(maxLengthName))
+	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, maxLengthName, C.double(generationOptions.MaxLength))
+	if err := OgaResultToError(res); err != nil {
+		C.DestroyOgaGeneratorParams(cGeneratorParams)
+		return nil, nil, fmt.Errorf("GeneratorParamsSetSearchNumber(max_length) failed: %w", err)
+	}
+
+	batchSizeName := C.CString("batch_size")
+	defer C.free(unsafe.Pointer(batchSizeName))
+	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, batchSizeName, C.double(generationOptions.BatchSize))
+	if err := OgaResultToError(res); err != nil {
+		C.DestroyOgaGeneratorParams(cGeneratorParams)
+		return nil, nil, fmt.Errorf("GeneratorParamsSetSearchNumber(batch_size) failed: %w", err)
+	}
+
+	// Create generator
+	var cGenerator *C.OgaGenerator
+	res = C.CreateOgaGenerator(s.model.modelPtr, cGeneratorParams, &cGenerator)
+	if err := OgaResultToError(res); err != nil {
+		C.DestroyOgaGeneratorParams(cGeneratorParams)
+		return nil, nil, fmt.Errorf("CreateOgaGenerator failed: %w", err)
+	}
+	if cGenerator == nil {
+		C.DestroyOgaGeneratorParams(cGeneratorParams)
+		return nil, nil, errors.New("CreateOgaGenerator returned nil")
+	}
+
+	generator := &generator{
+		generatorParamsPtr: cGeneratorParams,
+		generatorPtr:       cGenerator,
+	}
+
+	// Set the named tensors as inputs
+	if err := generator.setInputs(namedTensors); err != nil {
+		generator.destroy()
+		return nil, nil, fmt.Errorf("failed to set inputs: %w", err)
+	}
+
+	// Create tokenizer stream for decoding (we still need this for output)
+	var cStream *C.OgaTokenizerStream
+	res = C.CreateOgaTokenizerStream(s.tokenizer.tokenizerPtr, &cStream)
+	if err := OgaResultToError(res); err != nil {
+		generator.destroy()
+		return nil, nil, fmt.Errorf("CreateOgaTokenizerStream failed: %w", err)
+	}
+	if cStream == nil {
+		generator.destroy()
+		return nil, nil, errors.New("CreateOgaTokenizerStream returned nil")
+	}
+	tokStream := &tokenizerStream{streamPtr: cStream}
+
+	outputChan := make(chan SequenceDelta, 10)
+	errChan := make(chan error, 1)
+	go func() {
+		defer close(outputChan)
+		defer close(errChan)
+		defer generator.destroy()
+		defer tokStream.destroy()
+
+		// Use goroutine-local variables for per-run statistics to avoid race conditions
+		// when multiple Generate calls run concurrently on the same session.
+		runStart := time.Now()
+		// Use a map for first token times since the number of sequences may vary
+		// (especially for multimodal models where sequence count can differ from batch size)
+		runFirstTokenTimes := make(map[int]time.Time)
+		runTokenCount := 0
+
+		defer func() {
+			var earliest time.Time
+			for _, ft := range s.statistics.runFirstTokenTimes {
+				if !ft.IsZero() && (earliest.IsZero() || ft.Before(earliest)) {
+					earliest = ft
+				}
+			}
+			if !earliest.IsZero() && s.statistics.runTokenCount > 0 {
+				dur := time.Since(earliest).Seconds()
+				if dur > 0 {
+					s.statistics.cumulativeTokenDurationSeconds += dur
+					s.statistics.TokensPerSecond = float64(s.statistics.cumulativeTokens) / s.statistics.cumulativeTokenDurationSeconds
+				}
+			}
+			s.statistics.runFirstTokenTimes = nil
+			s.statistics.runTokenCount = 0
+			s.statistics.runStart = time.Time{}
+		}()
+		defer s.mutex.Unlock()
+
+		for !generator.IsDone() {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			var result *C.OgaResult
+			result = C.GeneratorGenerateNextToken(generator.generatorPtr)
+			if err := OgaResultToError(result); err != nil {
+				select {
+				case errChan <- err:
+				default:
+				}
+				return
+			}
+
+			// Iterate over each sequence in the batch
+			// Note: generationOptions.BatchSize tells us how many sequences we have
+			for i := range generationOptions.BatchSize {
+				seqLen := C.GeneratorGetSequenceCount(generator.generatorPtr, C.size_t(i))
+				if seqLen == 0 {
+					continue
+				}
+				cData := C.GeneratorGetSequenceData(generator.generatorPtr, C.size_t(i))
+				if cData == nil {
+					continue
+				}
+				lastToken := C.int32_t(*(*C.int32_t)(unsafe.Pointer(uintptr(unsafe.Pointer(cData)) + uintptr((seqLen-1)*4))))
+				decoded, decodeErr := tokStream.Decode(lastToken)
+				if decodeErr != nil {
+					select {
+					case errChan <- decodeErr:
+					default:
+					}
+					return
+				}
+				if decoded == "" {
+					continue
+				}
+
+				// stats
+				if _, seen := runFirstTokenTimes[i]; !seen {
+					runFirstTokenTimes[i] = time.Now()
+					prefill := runFirstTokenTimes[i].Sub(runStart).Seconds()
+					// Update cumulative statistics with mutex protection
+					s.mutex.Lock()
+					s.statistics.cumulativePrefillSum += prefill
+					s.statistics.cumulativePrefillCount++
+					s.statistics.AvgPrefillSeconds = s.statistics.cumulativePrefillSum / float64(s.statistics.cumulativePrefillCount)
+				}
+				s.statistics.cumulativeTokens++
+				s.statistics.runTokenCount++
+
+				select {
+				case outputChan <- SequenceDelta{Sequence: i, Tokens: decoded}:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}
+	}()
+	return outputChan, errChan, nil
+}
+
 func (s *Session) Destroy() {
 	s.model.destroy()
 	s.model = nil
@@ -445,6 +695,263 @@ func OgaResultToError(result *C.OgaResult) error {
 	msg := C.GoString(cString)
 	C.DestroyOgaResult(result)
 	return errors.New(msg)
+}
+
+// parseDataURI parses a data URI and returns the decoded data.
+// Supports format: data:image/png;base64,<base64-encoded-data>
+func parseDataURI(dataURI string) ([]byte, error) {
+	// Check if it starts with "data:"
+	if !strings.HasPrefix(dataURI, "data:") {
+		return nil, fmt.Errorf("invalid data URI: must start with 'data:'")
+	}
+
+	// Find the comma that separates metadata from data
+	commaIdx := strings.Index(dataURI, ",")
+	if commaIdx == -1 {
+		return nil, fmt.Errorf("invalid data URI: missing comma separator")
+	}
+
+	// Extract metadata and check for base64
+	metadata := dataURI[5:commaIdx] // skip "data:"
+	if !strings.Contains(metadata, "base64") {
+		return nil, fmt.Errorf("unsupported data URI encoding: only base64 is supported")
+	}
+
+	// Decode base64 data
+	encodedData := dataURI[commaIdx+1:]
+	decodedData, err := base64.StdEncoding.DecodeString(encodedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64 data: %w", err)
+	}
+
+	return decodedData, nil
+}
+
+// LoadImage loads a single image from a file path or data URI
+func LoadImage(imagePath string) (*Images, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+
+	// Check if it's a data URI
+	if strings.HasPrefix(imagePath, "data:") {
+		imageData, err := parseDataURI(imagePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse data URI: %w", err)
+		}
+		return LoadImageFromBuffer(imageData)
+	}
+
+	// Load from file path
+	cPath := C.CString(imagePath)
+	defer C.free(unsafe.Pointer(cPath))
+
+	var cImages *C.OgaImages
+	res := C.LoadOgaImage(cPath, &cImages)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("LoadImage failed: %w", err)
+	}
+	if cImages == nil {
+		return nil, errors.New("LoadImage returned nil without error")
+	}
+
+	return &Images{imagesPtr: cImages}, nil
+}
+
+// LoadImageFromBuffer loads a single image from a byte buffer
+func LoadImageFromBuffer(imageData []byte) (*Images, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+
+	if len(imageData) == 0 {
+		return nil, errors.New("image data is empty")
+	}
+
+	// Pin the Go memory before passing to C
+	var pinner runtime.Pinner
+	pinner.Pin(&imageData[0])
+	defer pinner.Unpin()
+
+	// Create C array of pointers and sizes
+	dataPtr := unsafe.Pointer(&imageData[0])
+	dataSize := C.size_t(len(imageData))
+
+	var cImages *C.OgaImages
+	res := C.LoadOgaImagesFromBuffers(
+		&dataPtr,
+		&dataSize,
+		1, // count = 1 for single image
+		&cImages,
+	)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("LoadImageFromBuffer failed: %w", err)
+	}
+	if cImages == nil {
+		return nil, errors.New("LoadImageFromBuffer returned nil without error")
+	}
+
+	return &Images{imagesPtr: cImages}, nil
+}
+
+// LoadImages loads multiple images from file paths or data URIs
+func LoadImages(imagePaths []string) (*Images, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+
+	if len(imagePaths) == 0 {
+		return nil, errors.New("no image paths provided")
+	}
+
+	// Check if any paths are data URIs - if so, we need to use buffer loading
+	hasDataURI := false
+	for _, path := range imagePaths {
+		if strings.HasPrefix(path, "data:") {
+			hasDataURI = true
+			break
+		}
+	}
+
+	if hasDataURI {
+		// Decode all images to buffers and use buffer loading
+		buffers := make([][]byte, len(imagePaths))
+		for i, path := range imagePaths {
+			if strings.HasPrefix(path, "data:") {
+				data, err := parseDataURI(path)
+				if err != nil {
+					return nil, fmt.Errorf("failed to parse data URI at index %d: %w", i, err)
+				}
+				buffers[i] = data
+			} else {
+				// For file paths, we'd need to read the file
+				// For now, return an error if mixing data URIs with file paths
+				return nil, errors.New("cannot mix data URIs with file paths in LoadImages")
+			}
+		}
+		return LoadImagesFromBuffers(buffers)
+	}
+
+	// All are file paths - use the C API directly
+	// Create OgaStringArray
+	var cStringArray *C.OgaStringArray
+	res := C.CreateOgaStringArray(&cStringArray)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("CreateOgaStringArray failed: %w", err)
+	}
+	defer C.DestroyOgaStringArray(cStringArray)
+
+	// Add each path to the string array
+	for _, path := range imagePaths {
+		cPath := C.CString(path)
+		res = C.AddStringToOgaStringArray(cStringArray, cPath)
+		C.free(unsafe.Pointer(cPath))
+		if err := OgaResultToError(res); err != nil {
+			return nil, fmt.Errorf("AddStringToOgaStringArray failed: %w", err)
+		}
+	}
+
+	// Load images
+	var cImages *C.OgaImages
+	res = C.LoadOgaImages(cStringArray, &cImages)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("LoadImages failed: %w", err)
+	}
+	if cImages == nil {
+		return nil, errors.New("LoadImages returned nil without error")
+	}
+
+	return &Images{imagesPtr: cImages}, nil
+}
+
+// LoadImagesFromBuffers loads multiple images from byte buffers
+func LoadImagesFromBuffers(imageBuffers [][]byte) (*Images, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+
+	if len(imageBuffers) == 0 {
+		return nil, errors.New("no image buffers provided")
+	}
+
+	// Create arrays for pointers and sizes
+	dataPtrs := make([]unsafe.Pointer, len(imageBuffers))
+	dataSizes := make([]C.size_t, len(imageBuffers))
+
+	// Pin all buffer memory before passing to C
+	var pinner runtime.Pinner
+	defer pinner.Unpin()
+
+	for i, buf := range imageBuffers {
+		if len(buf) == 0 {
+			return nil, fmt.Errorf("image buffer at index %d is empty", i)
+		}
+		pinner.Pin(&buf[0])
+		dataPtrs[i] = unsafe.Pointer(&buf[0])
+		dataSizes[i] = C.size_t(len(buf))
+	}
+
+	var cImages *C.OgaImages
+	res := C.LoadOgaImagesFromBuffers(
+		&dataPtrs[0],
+		&dataSizes[0],
+		C.size_t(len(imageBuffers)),
+		&cImages,
+	)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("LoadImagesFromBuffers failed: %w", err)
+	}
+	if cImages == nil {
+		return nil, errors.New("LoadImagesFromBuffers returned nil without error")
+	}
+
+	return &Images{imagesPtr: cImages}, nil
+}
+
+// CreateMultiModalProcessor creates a multimodal processor from a model
+func CreateMultiModalProcessor(model *model) (*MultiModalProcessor, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+
+	if model == nil || model.modelPtr == nil {
+		return nil, errors.New("model is nil")
+	}
+
+	var cProcessor *C.OgaMultiModalProcessor
+	res := C.CreateOgaMultiModalProcessor(model.modelPtr, &cProcessor)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("CreateMultiModalProcessor failed: %w", err)
+	}
+	if cProcessor == nil {
+		return nil, errors.New("CreateMultiModalProcessor returned nil without error")
+	}
+
+	return &MultiModalProcessor{processorPtr: cProcessor}, nil
+}
+
+// ProcessImages processes images with a prompt and returns named tensors
+func (p *MultiModalProcessor) ProcessImages(prompt string, images *Images) (*NamedTensors, error) {
+	if p.processorPtr == nil {
+		return nil, errors.New("processor is not initialized")
+	}
+	if images == nil || images.imagesPtr == nil {
+		return nil, errors.New("images is nil")
+	}
+
+	cPrompt := C.CString(prompt)
+	defer C.free(unsafe.Pointer(cPrompt))
+
+	var cTensors *C.OgaNamedTensors
+	res := C.ProcessOgaImages(p.processorPtr, cPrompt, images.imagesPtr, &cTensors)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("ProcessImages failed: %w", err)
+	}
+	if cTensors == nil {
+		return nil, errors.New("ProcessImages returned nil without error")
+	}
+
+	return &NamedTensors{tensorsPtr: cTensors}, nil
 }
 
 // CreateGenerativeSessionAdvanced builds a GenAI config from a config directory,

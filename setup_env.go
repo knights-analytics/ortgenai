@@ -149,6 +149,11 @@ func InitializeGenAiLibrary() error {
 		C.dlclose(handle)
 		return fmt.Errorf("missing OgaGeneratorAppendTokenSequences")
 	}
+	symGeneratorSetInputs := createSym(handle, "OgaGenerator_SetInputs")
+	if symGeneratorSetInputs == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaGeneratorSetInputs")
+	}
 	symGeneratorGenerateNextToken := createSym(handle, "OgaGenerator_GenerateNextToken")
 	if symGeneratorGenerateNextToken == nil {
 		C.dlclose(handle)
@@ -202,11 +207,69 @@ func InitializeGenAiLibrary() error {
 		return fmt.Errorf("missing OgaCreateModelFromConfig")
 	}
 
+	// Multimodal symbols
+	symLoadImage := createSym(handle, "OgaLoadImage")
+	if symLoadImage == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaLoadImage")
+	}
+	symLoadImages := createSym(handle, "OgaLoadImages")
+	if symLoadImages == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaLoadImages")
+	}
+	symLoadImagesFromBuffers := createSym(handle, "OgaLoadImagesFromBuffers")
+	if symLoadImagesFromBuffers == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaLoadImagesFromBuffers")
+	}
+	symDestroyImages := createSym(handle, "OgaDestroyImages")
+	if symDestroyImages == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaDestroyImages")
+	}
+	symCreateMultiModalProcessor := createSym(handle, "OgaCreateMultiModalProcessor")
+	if symCreateMultiModalProcessor == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaCreateMultiModalProcessor")
+	}
+	symDestroyMultiModalProcessor := createSym(handle, "OgaDestroyMultiModalProcessor")
+	if symDestroyMultiModalProcessor == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaDestroyMultiModalProcessor")
+	}
+	symProcessorProcessImages := createSym(handle, "OgaProcessorProcessImages")
+	if symProcessorProcessImages == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaProcessorProcessImages")
+	}
+	symDestroyNamedTensors := createSym(handle, "OgaDestroyNamedTensors")
+	if symDestroyNamedTensors == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaDestroyNamedTensors")
+	}
+	symCreateStringArray := createSym(handle, "OgaCreateStringArray")
+	if symCreateStringArray == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaCreateStringArray")
+	}
+	symDestroyStringArray := createSym(handle, "OgaDestroyStringArray")
+	if symDestroyStringArray == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaDestroyStringArray")
+	}
+	symStringArrayAddString := createSym(handle, "OgaStringArrayAddString")
+	if symStringArrayAddString == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaStringArrayAddString")
+	}
+
 	if rc := C.SetGenAiApi(symCreate, symErr, symDestroyRes, symDestroyModel, symCreateTokenizer, symDestroyTokenizer,
 		symCreateTokenizerStream, symDestroyTokenizerStream, symApplyChatTemplate, symDestroyString, symCreateSequence, symDestroySequence,
 		symTokenizerEncode, symCreateGenerator, symDestroyGenerator, symCreateGeneratorParams, symDestroyGeneratorParams,
-		symGeneratorParamsSetSearchNumber, symGeneratorAppendTokenSequences, symGeneratorGenerateNextToken, symGeneratorGetSequenceCount,
-		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig); rc != 0 {
+		symGeneratorParamsSetSearchNumber, symGeneratorAppendTokenSequences, symGeneratorSetInputs, symGeneratorGenerateNextToken, symGeneratorGetSequenceCount,
+		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig,
+		symLoadImage, symLoadImages, symLoadImagesFromBuffers, symDestroyImages, symCreateMultiModalProcessor, symDestroyMultiModalProcessor, symProcessorProcessImages, symDestroyNamedTensors, symCreateStringArray, symDestroyStringArray, symStringArrayAddString); rc != 0 {
 		C.dlclose(handle)
 		return fmt.Errorf("SetGenAiApi failed with code %d", int(rc))
 	}

@@ -22,6 +22,10 @@ typedef struct OgaSequences OgaSequences;
 typedef struct OgaGenerator OgaGenerator;
 typedef struct OgaGeneratorParams OgaGeneratorParams;
 typedef struct OgaConfig OgaConfig;
+typedef struct OgaImages OgaImages;
+typedef struct OgaMultiModalProcessor OgaMultiModalProcessor;
+typedef struct OgaNamedTensors OgaNamedTensors;
+typedef struct OgaStringArray OgaStringArray;
 
 // Function pointer typedefs for the subset of GenAI C API we wrap.
 typedef OgaResult* (*PFN_OgaCreateModel)(const char*, OgaModel**);
@@ -43,6 +47,7 @@ typedef OgaResult* (*PFN_OgaCreateGeneratorParams)(const OgaModel*, OgaGenerator
 typedef void (*PFN_OgaDestroyGeneratorParams)(OgaGeneratorParams*);
 typedef OgaResult* (*PFN_OgaGeneratorParamsSetSearchNumber)(OgaGeneratorParams*, const char*, double);
 typedef OgaResult* (*PFN_OgaGeneratorAppendTokenSequences)(OgaGenerator*, const OgaSequences*);
+typedef OgaResult* (*PFN_OgaGeneratorSetInputs)(OgaGenerator*, const OgaNamedTensors*);
 typedef OgaResult* (*PFN_OgaGeneratorGenerateNextToken)(OgaGenerator*);
 typedef size_t (*PFN_OgaGeneratorGetSequenceCount)(const OgaGenerator*, size_t);
 typedef const int32_t* (*PFN_OgaGeneratorGetSequenceData)(const OgaGenerator*, size_t);
@@ -55,6 +60,19 @@ typedef OgaResult* (*PFN_OgaConfigClearProviders)(OgaConfig*);
 typedef OgaResult* (*PFN_OgaConfigAppendProvider)(OgaConfig*, const char*);
 typedef OgaResult* (*PFN_OgaConfigSetProviderOption)(OgaConfig*, const char*, const char*, const char*);
 typedef OgaResult* (*PFN_OgaCreateModelFromConfig)(const OgaConfig*, OgaModel**);
+
+// Multimodal API
+typedef OgaResult* (*PFN_OgaLoadImage)(const char*, OgaImages**);
+typedef OgaResult* (*PFN_OgaLoadImages)(const OgaStringArray*, OgaImages**);
+typedef OgaResult* (*PFN_OgaLoadImagesFromBuffers)(const void**, const size_t*, size_t, OgaImages**);
+typedef void (*PFN_OgaDestroyImages)(OgaImages*);
+typedef OgaResult* (*PFN_OgaCreateMultiModalProcessor)(const OgaModel*, OgaMultiModalProcessor**);
+typedef void (*PFN_OgaDestroyMultiModalProcessor)(OgaMultiModalProcessor*);
+typedef OgaResult* (*PFN_OgaProcessorProcessImages)(const OgaMultiModalProcessor*, const char*, const OgaImages*, OgaNamedTensors**);
+typedef void (*PFN_OgaDestroyNamedTensors)(OgaNamedTensors*);
+typedef OgaResult* (*PFN_OgaCreateStringArray)(OgaStringArray**);
+typedef void (*PFN_OgaDestroyStringArray)(OgaStringArray*);
+typedef OgaResult* (*PFN_OgaStringArrayAddString)(OgaStringArray*, const char*);
 
 // Aggregated API table mirroring the pattern used by OrtApi in onnxruntime_go.
 typedef struct GenAiApiTable {
@@ -77,6 +95,7 @@ typedef struct GenAiApiTable {
 	PFN_OgaDestroyGeneratorParams DestroyGeneratorParams;
 	PFN_OgaGeneratorParamsSetSearchNumber GeneratorParamsSetSearchNumber;
 	PFN_OgaGeneratorAppendTokenSequences GeneratorAppendTokenSequences;
+	PFN_OgaGeneratorSetInputs GeneratorSetInputs;
 	PFN_OgaGeneratorGenerateNextToken GeneratorGenerateNextToken;
 	PFN_OgaGeneratorGetSequenceCount GeneratorGetSequenceCount;
 	PFN_OgaGeneratorGetSequenceData GeneratorGetSequenceData;
@@ -88,6 +107,18 @@ typedef struct GenAiApiTable {
 	PFN_OgaConfigAppendProvider ConfigAppendProvider;
 	PFN_OgaConfigSetProviderOption ConfigSetProviderOption;
 	PFN_OgaCreateModelFromConfig CreateModelFromConfig;
+	// Multimodal
+	PFN_OgaLoadImage LoadImage;
+	PFN_OgaLoadImages LoadImages;
+	PFN_OgaLoadImagesFromBuffers LoadImagesFromBuffers;
+	PFN_OgaDestroyImages DestroyImages;
+	PFN_OgaCreateMultiModalProcessor CreateMultiModalProcessor;
+	PFN_OgaDestroyMultiModalProcessor DestroyMultiModalProcessor;
+	PFN_OgaProcessorProcessImages ProcessorProcessImages;
+	PFN_OgaDestroyNamedTensors DestroyNamedTensors;
+	PFN_OgaCreateStringArray CreateStringArray;
+	PFN_OgaDestroyStringArray DestroyStringArray;
+	PFN_OgaStringArrayAddString StringArrayAddString;
 } GenAiApiTable;
 
 // Sets the global function pointer table. All pointers must be non-null.
@@ -111,6 +142,7 @@ int SetGenAiApi(void* createModel,
 			void* destroyGeneratorParams,
 		void* generatorParamsSetSearchNumber,
 	void* generatorAppendTokenSequences,
+	void* generatorSetInputs,
 	void* generatorGenerateNextToken,
 	void* generatorGetSequenceCount,
 	void* generatorGetSequenceData,
@@ -121,7 +153,19 @@ int SetGenAiApi(void* createModel,
 	void* configClearProviders,
 	void* configAppendProvider,
 	void* configSetProviderOption,
-	void* createModelFromConfig);
+	void* createModelFromConfig,
+	// Multimodal
+	void* loadImage,
+	void* loadImages,
+	void* loadImagesFromBuffers,
+	void* destroyImages,
+	void* createMultiModalProcessor,
+	void* destroyMultiModalProcessor,
+	void* processorProcessImages,
+	void* destroyNamedTensors,
+	void* createStringArray,
+	void* destroyStringArray,
+	void* stringArrayAddString);
 
 // Returns non-zero if the API table is initialized.
 int GenAiApiIsInitialized(void);
@@ -149,6 +193,7 @@ OgaResult* ApplyOgaTokenizerChatTemplate(const OgaTokenizer* tokenizer, const ch
 
 OgaResult* GeneratorParamsSetSearchNumber(OgaGeneratorParams* generatorParams, const char* name, double searchNumber);
 OgaResult* GeneratorAppendTokenSequences(OgaGenerator* generator, OgaSequences* sequences);
+OgaResult* GeneratorSetInputs(OgaGenerator* generator, const OgaNamedTensors* named_tensors);
 OgaResult* GeneratorGenerateNextToken(OgaGenerator* generator);
 size_t GeneratorGetSequenceCount(const OgaGenerator* generator, size_t sequence_index);
 const int32_t* GeneratorGetSequenceData(const OgaGenerator* generator, size_t sequence_index);
@@ -161,6 +206,19 @@ OgaResult* OgaConfigClearProviders(OgaConfig* config);
 OgaResult* OgaConfigAppendProvider(OgaConfig* config, const char* provider);
 OgaResult* OgaConfigSetProviderOption(OgaConfig* config, const char* provider, const char* key, const char* value);
 OgaResult* CreateOgaModelFromConfig(const OgaConfig* config, OgaModel** out);
+
+// Multimodal thin wrappers
+OgaResult* LoadOgaImage(const char* image_path, OgaImages** out);
+OgaResult* LoadOgaImages(const OgaStringArray* image_paths, OgaImages** out);
+OgaResult* LoadOgaImagesFromBuffers(const void** image_data, const size_t* image_data_sizes, size_t count, OgaImages** out);
+void DestroyOgaImages(OgaImages* images);
+OgaResult* CreateOgaMultiModalProcessor(const OgaModel* model, OgaMultiModalProcessor** out);
+void DestroyOgaMultiModalProcessor(OgaMultiModalProcessor* processor);
+OgaResult* ProcessOgaImages(const OgaMultiModalProcessor* processor, const char* prompt, const OgaImages* images, OgaNamedTensors** out);
+void DestroyOgaNamedTensors(OgaNamedTensors* tensors);
+OgaResult* CreateOgaStringArray(OgaStringArray** out);
+void DestroyOgaStringArray(OgaStringArray* string_array);
+OgaResult* AddStringToOgaStringArray(OgaStringArray* string_array, const char* str);
 
 #ifdef __cplusplus
 } // extern "C"

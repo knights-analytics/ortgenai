@@ -22,6 +22,7 @@ int SetGenAiApi(void* createModel,
 			void* destroyGeneratorParams,
 			void* generatorParamsSetSearchNumber,
 			void* generatorAppendTokenSequences,
+			void* generatorSetInputs,
 			void* generatorGenerateNextToken,
 			void* generatorGetSequenceCount,
 			void* generatorGetSequenceData,
@@ -32,17 +33,33 @@ int SetGenAiApi(void* createModel,
 			void* configClearProviders,
 			void* configAppendProvider,
 			void* configSetProviderOption,
-			void* createModelFromConfig) {
+			void* createModelFromConfig,
+			// Multimodal
+			void* loadImage,
+			void* loadImages,
+			void* loadImagesFromBuffers,
+			void* destroyImages,
+			void* createMultiModalProcessor,
+			void* destroyMultiModalProcessor,
+			void* processorProcessImages,
+			void* destroyNamedTensors,
+			void* createStringArray,
+			void* destroyStringArray,
+			void* stringArrayAddString) {
 	if (g_initialized) return 0; // already initialized
 	// Validate all required pointers (header comment: all must be non-null)
 	if (!createModel || !resultGetError || !destroyResult || !destroyModel ||
 		!createTokenizer || !destroyTokenizer || !createTokenizerStream || !destroyTokenizerStream ||
 		!applyChatTemplate || !destroyString || !createSequences || !destroySequences || !tokenizerEncode ||
 		!createGenerator || !destroyGenerator || !createGeneratorParams || !destroyGeneratorParams ||
-		!generatorParamsSetSearchNumber || !generatorAppendTokenSequences || !generatorGenerateNextToken ||
+		!generatorParamsSetSearchNumber || !generatorAppendTokenSequences || !generatorSetInputs || !generatorGenerateNextToken ||
 		!generatorGetSequenceCount || !generatorGetSequenceData || !tokenizerStreamDecode || !isDone ||
 		// Config
-		!createConfig || !configClearProviders || !configAppendProvider || !configSetProviderOption || !createModelFromConfig) {
+		!createConfig || !configClearProviders || !configAppendProvider || !configSetProviderOption || !createModelFromConfig ||
+		// Multimodal
+		!loadImage || !loadImages || !loadImagesFromBuffers || !destroyImages ||
+		!createMultiModalProcessor || !destroyMultiModalProcessor || !processorProcessImages ||
+		!destroyNamedTensors || !createStringArray || !destroyStringArray || !stringArrayAddString) {
 		return 1;
 	}
 	g_api.CreateModel = (PFN_OgaCreateModel) createModel;
@@ -64,6 +81,7 @@ int SetGenAiApi(void* createModel,
 	g_api.DestroyGeneratorParams = (PFN_OgaDestroyGeneratorParams) destroyGeneratorParams;
 	g_api.GeneratorParamsSetSearchNumber = (PFN_OgaGeneratorParamsSetSearchNumber) generatorParamsSetSearchNumber;
 	g_api.GeneratorAppendTokenSequences = (PFN_OgaGeneratorAppendTokenSequences) generatorAppendTokenSequences;
+	g_api.GeneratorSetInputs = (PFN_OgaGeneratorSetInputs) generatorSetInputs;
 	g_api.GeneratorGenerateNextToken = (PFN_OgaGeneratorGenerateNextToken) generatorGenerateNextToken;
 	g_api.GeneratorGetSequenceCount = (PFN_OgaGeneratorGetSequenceCount) generatorGetSequenceCount;
 	g_api.GeneratorGetSequenceData = (PFN_OgaGeneratorGetSequenceData) generatorGetSequenceData;
@@ -75,6 +93,18 @@ int SetGenAiApi(void* createModel,
 	g_api.ConfigAppendProvider = (PFN_OgaConfigAppendProvider) configAppendProvider;
 	g_api.ConfigSetProviderOption = (PFN_OgaConfigSetProviderOption) configSetProviderOption;
 	g_api.CreateModelFromConfig = (PFN_OgaCreateModelFromConfig) createModelFromConfig;
+	// Multimodal
+	g_api.LoadImage = (PFN_OgaLoadImage) loadImage;
+	g_api.LoadImages = (PFN_OgaLoadImages) loadImages;
+	g_api.LoadImagesFromBuffers = (PFN_OgaLoadImagesFromBuffers) loadImagesFromBuffers;
+	g_api.DestroyImages = (PFN_OgaDestroyImages) destroyImages;
+	g_api.CreateMultiModalProcessor = (PFN_OgaCreateMultiModalProcessor) createMultiModalProcessor;
+	g_api.DestroyMultiModalProcessor = (PFN_OgaDestroyMultiModalProcessor) destroyMultiModalProcessor;
+	g_api.ProcessorProcessImages = (PFN_OgaProcessorProcessImages) processorProcessImages;
+	g_api.DestroyNamedTensors = (PFN_OgaDestroyNamedTensors) destroyNamedTensors;
+	g_api.CreateStringArray = (PFN_OgaCreateStringArray) createStringArray;
+	g_api.DestroyStringArray = (PFN_OgaDestroyStringArray) destroyStringArray;
+	g_api.StringArrayAddString = (PFN_OgaStringArrayAddString) stringArrayAddString;
 	g_initialized = 1;
 	return 0;
 }
@@ -184,6 +214,11 @@ OgaResult* GeneratorAppendTokenSequences(OgaGenerator* generator, OgaSequences* 
 	return g_api.GeneratorAppendTokenSequences(generator, sequences);
 }
 
+OgaResult* GeneratorSetInputs(OgaGenerator* generator, const OgaNamedTensors* named_tensors) {
+	if (!g_initialized || !g_api.GeneratorSetInputs) return NULL;
+	return g_api.GeneratorSetInputs(generator, named_tensors);
+}
+
 OgaResult* GeneratorGenerateNextToken(OgaGenerator* generator) {
 	if (!g_initialized || !g_api.GeneratorGenerateNextToken) return NULL;
 	return g_api.GeneratorGenerateNextToken(generator);
@@ -233,4 +268,64 @@ OgaResult* OgaConfigSetProviderOption(OgaConfig* config, const char* provider, c
 OgaResult* CreateOgaModelFromConfig(const OgaConfig* config, OgaModel** out) {
 	if (!g_initialized || !g_api.CreateModelFromConfig) return NULL;
 	return g_api.CreateModelFromConfig(config, out);
+}
+
+// Multimodal thin wrappers
+OgaResult* LoadOgaImage(const char* image_path, OgaImages** out) {
+	if (!g_initialized || !g_api.LoadImage) return NULL;
+	return g_api.LoadImage(image_path, out);
+}
+
+OgaResult* LoadOgaImages(const OgaStringArray* image_paths, OgaImages** out) {
+	if (!g_initialized || !g_api.LoadImages) return NULL;
+	return g_api.LoadImages(image_paths, out);
+}
+
+OgaResult* LoadOgaImagesFromBuffers(const void** image_data, const size_t* image_data_sizes, size_t count, OgaImages** out) {
+	if (!g_initialized || !g_api.LoadImagesFromBuffers) return NULL;
+	return g_api.LoadImagesFromBuffers(image_data, image_data_sizes, count, out);
+}
+
+void DestroyOgaImages(OgaImages* images) {
+	if (!images) return;
+	if (!g_initialized || !g_api.DestroyImages) return;
+	g_api.DestroyImages(images);
+}
+
+OgaResult* CreateOgaMultiModalProcessor(const OgaModel* model, OgaMultiModalProcessor** out) {
+	if (!g_initialized || !g_api.CreateMultiModalProcessor) return NULL;
+	return g_api.CreateMultiModalProcessor(model, out);
+}
+
+void DestroyOgaMultiModalProcessor(OgaMultiModalProcessor* processor) {
+	if (!processor) return;
+	if (!g_initialized || !g_api.DestroyMultiModalProcessor) return;
+	g_api.DestroyMultiModalProcessor(processor);
+}
+
+OgaResult* ProcessOgaImages(const OgaMultiModalProcessor* processor, const char* prompt, const OgaImages* images, OgaNamedTensors** out) {
+	if (!g_initialized || !g_api.ProcessorProcessImages) return NULL;
+	return g_api.ProcessorProcessImages(processor, prompt, images, out);
+}
+
+void DestroyOgaNamedTensors(OgaNamedTensors* tensors) {
+	if (!tensors) return;
+	if (!g_initialized || !g_api.DestroyNamedTensors) return;
+	g_api.DestroyNamedTensors(tensors);
+}
+
+OgaResult* CreateOgaStringArray(OgaStringArray** out) {
+	if (!g_initialized || !g_api.CreateStringArray) return NULL;
+	return g_api.CreateStringArray(out);
+}
+
+void DestroyOgaStringArray(OgaStringArray* string_array) {
+	if (!string_array) return;
+	if (!g_initialized || !g_api.DestroyStringArray) return;
+	g_api.DestroyStringArray(string_array);
+}
+
+OgaResult* AddStringToOgaStringArray(OgaStringArray* string_array, const char* str) {
+	if (!g_initialized || !g_api.StringArrayAddString) return NULL;
+	return g_api.StringArrayAddString(string_array, str);
 }
