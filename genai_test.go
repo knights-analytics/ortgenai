@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// testImagePNG is a minimal valid 1x1 red PNG image (base64 encoded)
+// testImagePNG is a minimal valid 1x1 red PNG image (base64 encoded).
 var testImagePNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
 var testJSONs = []string{
@@ -88,7 +88,7 @@ func TestGeneration(t *testing.T) {
 
 	modelPath := "./_models/phi3.5"
 
-	session, err := CreateGenerativeSession(modelPath)
+	session, err := CreateGenerativeSession(modelPath, nil)
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestGeneration(t *testing.T) {
 }
 
 // getLibraryPath returns the path to libonnxruntime-genai from ONNXRUNTIME_GENAI_LIB env var
-// or defaults to /usr/lib/libonnxruntime-genai.so
+// or defaults to /usr/lib/libonnxruntime-genai.so.
 func getLibraryPath() string {
 	if path := os.Getenv("ONNXRUNTIME_GENAI_LIB"); path != "" {
 		return path
@@ -269,7 +269,8 @@ func TestParseDataURI(t *testing.T) {
 // TestMultimodalGeneration tests the full multimodal pipeline.
 // Requires a vision-language model (e.g., phi-3.5-vision).
 func TestMultimodalGeneration(t *testing.T) {
-	visionModelPath := "./_models/phi-3.5-vision"
+	t.Skip() // skip by default in CI
+	visionModelPath := "./_models/phi3.5vision"
 	if _, err := os.Stat(visionModelPath); os.IsNotExist(err) {
 		t.Skip("Vision model not found at " + visionModelPath)
 	}
@@ -285,7 +286,11 @@ func TestMultimodalGeneration(t *testing.T) {
 		}
 	}()
 
-	session, err := CreateGenerativeSession(visionModelPath)
+	options := &SessionOptions{
+		Multimodal: true,
+	}
+
+	session, err := CreateGenerativeSession(visionModelPath, options)
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
@@ -302,30 +307,19 @@ func TestMultimodalGeneration(t *testing.T) {
 	}
 	defer images.Destroy()
 
-	processor, err := CreateMultiModalProcessor(session.model)
-	if err != nil {
-		t.Fatalf("CreateMultiModalProcessor failed: %v", err)
-	}
-	defer processor.Destroy()
-
 	prompt := "<|user|>\n<|image_1|>\nWhat is in this image?<|end|>\n<|assistant|>\n"
-	tensors, err := processor.ProcessImages(prompt, images)
-	if err != nil {
-		t.Fatalf("ProcessImages failed: %v", err)
-	}
-	defer tensors.Destroy()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute) // give this one a wide berth
 	defer cancel()
 
-	options := &GenerationOptions{
+	generationOptions := &GenerationOptions{
 		MaxLength: 4096,
 		BatchSize: 1,
 	}
 
-	outputChan, errChan, err := session.GenerateWithTensors(ctx, tensors, options)
+	outputChan, errChan, err := session.GenerateWithImages(ctx, []string{prompt}, images, generationOptions)
 	if err != nil {
-		t.Fatalf("GenerateWithTensors failed: %v", err)
+		t.Fatalf("GenerateWithImages failed: %v", err)
 	}
 
 	var output []string

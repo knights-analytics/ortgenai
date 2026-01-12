@@ -9,6 +9,7 @@ This package provides a thin, idiomatic Go wrapper around the ONNX Runtime GenAI
 - Batched, streaming text generation with per-token deltas
 - Runtime statistics (tokens/sec, prefill timings)
 - Provider selection and advanced provider options
+- Multimodal input support (text + images)
 
 Note: The current implementation loads the GenAI shared library via `dlopen`, and targets Linux (ELF `.so`).
 

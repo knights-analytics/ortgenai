@@ -73,6 +73,7 @@ typedef void (*PFN_OgaDestroyNamedTensors)(OgaNamedTensors*);
 typedef OgaResult* (*PFN_OgaCreateStringArray)(OgaStringArray**);
 typedef void (*PFN_OgaDestroyStringArray)(OgaStringArray*);
 typedef OgaResult* (*PFN_OgaStringArrayAddString)(OgaStringArray*, const char*);
+typedef OgaResult* (*PFN_OgaProcessorProcessImagesAndPrompts)(const OgaMultiModalProcessor*, const OgaStringArray*, const OgaImages*, OgaNamedTensors**);
 
 // Aggregated API table mirroring the pattern used by OrtApi in onnxruntime_go.
 typedef struct GenAiApiTable {
@@ -119,6 +120,7 @@ typedef struct GenAiApiTable {
 	PFN_OgaCreateStringArray CreateStringArray;
 	PFN_OgaDestroyStringArray DestroyStringArray;
 	PFN_OgaStringArrayAddString StringArrayAddString;
+	PFN_OgaProcessorProcessImagesAndPrompts ProcessorProcessImagesAndPrompts;
 } GenAiApiTable;
 
 // Sets the global function pointer table. All pointers must be non-null.
@@ -165,7 +167,8 @@ int SetGenAiApi(void* createModel,
 	void* destroyNamedTensors,
 	void* createStringArray,
 	void* destroyStringArray,
-	void* stringArrayAddString);
+	void* stringArrayAddString,
+	void* processorProcessImagesAndPrompts);
 
 // Returns non-zero if the API table is initialized.
 int GenAiApiIsInitialized(void);
@@ -219,6 +222,7 @@ void DestroyOgaNamedTensors(OgaNamedTensors* tensors);
 OgaResult* CreateOgaStringArray(OgaStringArray** out);
 void DestroyOgaStringArray(OgaStringArray* string_array);
 OgaResult* AddStringToOgaStringArray(OgaStringArray* string_array, const char* str);
+OgaResult* ProcessOgaImagesAndPrompts(const OgaMultiModalProcessor* processor,  const OgaStringArray* prompts, const OgaImages* images, OgaNamedTensors** out);
 
 #ifdef __cplusplus
 } // extern "C"

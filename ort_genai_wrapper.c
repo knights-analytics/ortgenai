@@ -45,7 +45,8 @@ int SetGenAiApi(void* createModel,
 			void* destroyNamedTensors,
 			void* createStringArray,
 			void* destroyStringArray,
-			void* stringArrayAddString) {
+			void* stringArrayAddString,
+			void* processorProcessImagesAndPrompts) {
 	if (g_initialized) return 0; // already initialized
 	// Validate all required pointers (header comment: all must be non-null)
 	if (!createModel || !resultGetError || !destroyResult || !destroyModel ||
@@ -59,7 +60,7 @@ int SetGenAiApi(void* createModel,
 		// Multimodal
 		!loadImage || !loadImages || !loadImagesFromBuffers || !destroyImages ||
 		!createMultiModalProcessor || !destroyMultiModalProcessor || !processorProcessImages ||
-		!destroyNamedTensors || !createStringArray || !destroyStringArray || !stringArrayAddString) {
+		!destroyNamedTensors || !createStringArray || !destroyStringArray || !stringArrayAddString || !processorProcessImagesAndPrompts) {
 		return 1;
 	}
 	g_api.CreateModel = (PFN_OgaCreateModel) createModel;
@@ -105,6 +106,7 @@ int SetGenAiApi(void* createModel,
 	g_api.CreateStringArray = (PFN_OgaCreateStringArray) createStringArray;
 	g_api.DestroyStringArray = (PFN_OgaDestroyStringArray) destroyStringArray;
 	g_api.StringArrayAddString = (PFN_OgaStringArrayAddString) stringArrayAddString;
+	g_api.ProcessorProcessImagesAndPrompts = (PFN_OgaProcessorProcessImagesAndPrompts) processorProcessImagesAndPrompts;
 	g_initialized = 1;
 	return 0;
 }
@@ -328,4 +330,9 @@ void DestroyOgaStringArray(OgaStringArray* string_array) {
 OgaResult* AddStringToOgaStringArray(OgaStringArray* string_array, const char* str) {
 	if (!g_initialized || !g_api.StringArrayAddString) return NULL;
 	return g_api.StringArrayAddString(string_array, str);
+}
+
+OgaResult* ProcessOgaImagesAndPrompts(const OgaMultiModalProcessor* processor,  const OgaStringArray* prompts, const OgaImages* images, OgaNamedTensors** out) {
+	if (!g_initialized || !g_api.ProcessorProcessImagesAndPrompts) return NULL;
+	return g_api.ProcessorProcessImagesAndPrompts(processor, prompts, images, out);
 }
