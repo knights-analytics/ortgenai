@@ -179,9 +179,21 @@ type Session struct {
 	mutex      sync.Mutex // the C API is not thread-safe
 }
 
+type MaxLengthReachedError struct{}
+
+func (e MaxLengthReachedError) Error() string {
+	return "generation stopped: max length reached"
+}
+
+type ContextCancelledError struct{}
+
+func (s ContextCancelledError) Error() string {
+	return "generation stopped: context cancelled"
+}
+
 type SequenceDelta struct {
 	Sequence int
-	Tokens   string
+	Token    string
 }
 
 // Statistics captures generation performance metrics.
@@ -338,7 +350,7 @@ func sendGenerationError(errChan chan<- error, err error) {
 
 // startGenerationGoroutine launches the unified generation loop and returns output and error channels.
 // Assumes the session mutex is already locked; it will be unlocked inside the goroutine when done.
-func startGenerationGoroutine(ctx context.Context, s *Session, generator *generator, tokenizerStreams []*tokenizerStream, seqCount int) (<-chan SequenceDelta, <-chan error) {
+func startGenerationGoroutine(ctx context.Context, s *Session, generator *generator, tokenizerStreams []*tokenizerStream, seqCount int, maxLength int) (<-chan SequenceDelta, <-chan error) {
 	outputChan := make(chan SequenceDelta, 10)
 	errChan := make(chan error, 1)
 	go func() {
@@ -379,14 +391,32 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 		firstEmitted := make([]bool, seqCount)
 		lastChar := make([]rune, seqCount)
 
+		// Capture initial token counts per sequence to compare against at completion
+		initialCounts := make([]int, seqCount)
+		for i := 0; i < seqCount; i++ {
+			initialCounts[i] = int(C.GeneratorGetSequenceCount(generator.generatorPtr, C.size_t(i)))
+		}
+
 		for {
 			select {
 			case <-ctx.Done():
+				sendGenerationError(errChan, ContextCancelledError{})
 				return
 			default:
 			}
 
 			if generator.IsDone() {
+				// Determine if max generated tokens (excluding prompt) reached in any sequence
+				reached := false
+				for i := 0; i < seqCount; i++ {
+					if initialCounts[i]+runTokenCount >= maxLength {
+						reached = true
+						break
+					}
+				}
+				if reached {
+					sendGenerationError(errChan, MaxLengthReachedError{})
+				}
 				return
 			}
 
@@ -408,10 +438,21 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 					sendGenerationError(errChan, decodeErr)
 					return
 				}
+				// stats
+				if runFirstTokenTimes[i].IsZero() {
+					runFirstTokenTimes[i] = time.Now()
+					prefill := runFirstTokenTimes[i].Sub(runStart).Seconds()
+					s.statistics.CumulativePrefillSum += prefill
+					s.statistics.CumulativePrefillCount++
+					s.statistics.AvgPrefillSeconds = s.statistics.CumulativePrefillSum / float64(s.statistics.CumulativePrefillCount)
+				}
+				s.statistics.CumulativeTokens++
+				runTokenCount++
+
+				// normalization: skip leading spaces for first token, avoid repeated '.' at end
 				if decoded == "" {
 					continue
 				}
-				// normalization: skip leading spaces for first token, avoid repeated '.' at end
 				if !firstEmitted[i] {
 					trim := strings.TrimLeft(decoded, " ")
 					if trim == "" {
@@ -426,19 +467,10 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 				r := []rune(decoded)
 				lastChar[i] = r[len(r)-1]
 
-				// stats
-				if runFirstTokenTimes[i].IsZero() {
-					runFirstTokenTimes[i] = time.Now()
-					prefill := runFirstTokenTimes[i].Sub(runStart).Seconds()
-					s.statistics.CumulativePrefillSum += prefill
-					s.statistics.CumulativePrefillCount++
-					s.statistics.AvgPrefillSeconds = s.statistics.CumulativePrefillSum / float64(s.statistics.CumulativePrefillCount)
-				}
-				s.statistics.CumulativeTokens++
-				runTokenCount++
 				select {
-				case outputChan <- SequenceDelta{Sequence: i, Tokens: decoded}:
+				case outputChan <- SequenceDelta{Sequence: i, Token: decoded}:
 				case <-ctx.Done():
+					sendGenerationError(errChan, ContextCancelledError{})
 					return
 				}
 			}
@@ -476,7 +508,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 		return nil, nil, fmt.Errorf("failed to add sequences to generator: %w", err)
 	}
 
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, tokenizerStreams, len(messages))
+	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, tokenizerStreams, len(messages), generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 
@@ -556,7 +588,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		}
 		tokenizerStreams = append(tokenizerStreams, ts)
 	}
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, tokenizerStreams, numSeq)
+	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, tokenizerStreams, numSeq, generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 

@@ -127,9 +127,9 @@ func TestGeneration(t *testing.T) {
 	for token := range generateChan {
 		switch token.Sequence {
 		case 0:
-			firstSequenceOutput = append(firstSequenceOutput, token.Tokens)
+			firstSequenceOutput = append(firstSequenceOutput, token.Token)
 		case 1:
-			secondSequenceOutput = append(secondSequenceOutput, token.Tokens)
+			secondSequenceOutput = append(secondSequenceOutput, token.Token)
 		}
 	}
 	for err := range errChan {
@@ -323,7 +323,7 @@ func TestMultimodalGeneration(t *testing.T) {
 
 	var output []string
 	for token := range outputChan {
-		output = append(output, token.Tokens)
+		output = append(output, token.Token)
 	}
 
 	for err := range errChan {

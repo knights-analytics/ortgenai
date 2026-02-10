@@ -55,9 +55,9 @@ func TestGenerationGPU(t *testing.T) {
 	for token := range generateChan {
 		switch token.Sequence {
 		case 0:
-			firstSequenceOutput = append(firstSequenceOutput, token.Tokens)
+			firstSequenceOutput = append(firstSequenceOutput, token.Token)
 		case 1:
-			secondSequenceOutput = append(secondSequenceOutput, token.Tokens)
+			secondSequenceOutput = append(secondSequenceOutput, token.Token)
 		}
 	}
 	for err := range errChan {
