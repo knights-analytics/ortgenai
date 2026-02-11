@@ -74,10 +74,14 @@ type generator struct {
 }
 
 func (g *generator) destroy() {
-	C.DestroyOgaGenerator(g.generatorPtr)
-	g.generatorPtr = nil
-	C.DestroyOgaGeneratorParams(g.generatorParamsPtr)
-	g.generatorParamsPtr = nil
+	if g.generatorPtr != nil {
+		C.DestroyOgaGenerator(g.generatorPtr)
+		g.generatorPtr = nil
+	}
+	if g.generatorParamsPtr != nil {
+		C.DestroyOgaGeneratorParams(g.generatorParamsPtr)
+		g.generatorParamsPtr = nil
+	}
 }
 
 func (g *generator) setInputs(namedTensors *NamedTensors) error {
@@ -160,6 +164,13 @@ type sequences struct {
 	sequencesPtr *C.OgaSequences
 }
 
+func (s *sequences) destroy() {
+	if s.sequencesPtr != nil {
+		C.DestroyOgaSequences(s.sequencesPtr)
+		s.sequencesPtr = nil
+	}
+}
+
 type model struct {
 	modelPtr *C.OgaModel
 }
@@ -167,8 +178,8 @@ type model struct {
 func (m *model) destroy() {
 	if m.modelPtr != nil {
 		C.DestroyOgaModel(m.modelPtr)
+		m.modelPtr = nil
 	}
-	m.modelPtr = nil
 }
 
 type Session struct {
@@ -307,10 +318,7 @@ func (t *tokenizer) tokenizeMessages(messages [][]Message) (*sequences, []*token
 }
 
 func tokenizeCleanup(sequencesInstance *sequences, tokenizerStreams []*tokenizerStream) {
-	if sequencesInstance.sequencesPtr != nil {
-		C.DestroyOgaSequences(sequencesInstance.sequencesPtr)
-		sequencesInstance.sequencesPtr = nil
-	}
+	sequencesInstance.destroy()
 	for _, ts := range tokenizerStreams {
 		if ts != nil {
 			ts.destroy()
@@ -366,13 +374,19 @@ func sendGenerationError(errChan chan<- error, err error) {
 
 // startGenerationGoroutine launches the unified generation loop and returns output and error channels.
 // Assumes the session mutex is already locked; it will be unlocked inside the goroutine when done.
-func startGenerationGoroutine(ctx context.Context, s *Session, generator *generator, tokenizerStreams []*tokenizerStream, seqCount int, maxLength int) (<-chan SequenceDelta, <-chan error) {
+func startGenerationGoroutine(ctx context.Context, s *Session, generator *generator, sequences *sequences, tensors *NamedTensors, tokenizerStreams []*tokenizerStream, seqCount int, maxLength int) (<-chan SequenceDelta, <-chan error) {
 	outputChan := make(chan SequenceDelta, 10)
 	errChan := make(chan error, 1)
 	go func() {
 		defer close(outputChan)
 		defer close(errChan)
 		defer generator.destroy()
+		if sequences != nil {
+			defer sequences.destroy()
+		}
+		if tensors != nil {
+			defer tensors.destroy()
+		}
 		defer func() {
 			for _, ts := range tokenizerStreams {
 				if ts != nil {
@@ -502,7 +516,6 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("TokenizeMessages failed: %w", tokenizeErr)
 	}
-
 	if generationOptions == nil {
 		generationOptions = &GenerationOptions{
 			MaxLength: defaultMaxLength,
@@ -515,9 +528,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
-		if sequences != nil && sequences.sequencesPtr != nil {
-			C.DestroyOgaSequences(sequences.sequencesPtr)
-		}
+		sequences.destroy()
 		for _, ts := range tokenizerStreams {
 			ts.destroy()
 		}
@@ -525,6 +536,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 		return nil, nil, err
 	}
 	if err = generator.addSequences(sequences); err != nil {
+		sequences.destroy()
 		for _, ts := range tokenizerStreams {
 			ts.destroy()
 		}
@@ -533,7 +545,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 		return nil, nil, fmt.Errorf("failed to add sequences to generator: %w", err)
 	}
 
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, tokenizerStreams, len(messages), generationOptions.MaxLength)
+	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, sequences, tokenizerStreams, len(messages), generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 
@@ -575,7 +587,6 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("ProcessImages failed: %w", err)
 	}
-	defer tensors.Destroy()
 
 	if generationOptions == nil {
 		generationOptions = &GenerationOptions{MaxLength: defaultMaxLength}
@@ -614,7 +625,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		}
 		tokenizerStreams = append(tokenizerStreams, ts)
 	}
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, tokenizerStreams, numSeq, generationOptions.MaxLength)
+	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, nil, tensors, tokenizerStreams, numSeq, generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 
