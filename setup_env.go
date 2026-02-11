@@ -180,6 +180,13 @@ func InitializeGenAiLibrary() error {
 		return fmt.Errorf("missing OgaGenerator_IsDone")
 	}
 
+	// EOS token ids
+	symTokenizerGetEosTokenIDs := createSym(handle, "OgaTokenizerGetEosTokenIds")
+	if symTokenizerGetEosTokenIDs == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaTokenizerGetEosTokenIds")
+	}
+
 	// Config-related symbols
 	symCreateConfig := createSym(handle, "OgaCreateConfig")
 	if symCreateConfig == nil {
@@ -278,7 +285,7 @@ func InitializeGenAiLibrary() error {
 		symCreateTokenizerStream, symDestroyTokenizerStream, symApplyChatTemplate, symDestroyString, symCreateSequence, symDestroySequence,
 		symTokenizerEncode, symCreateGenerator, symDestroyGenerator, symCreateGeneratorParams, symDestroyGeneratorParams,
 		symGeneratorParamsSetSearchNumber, symGeneratorAppendTokenSequences, symGeneratorSetInputs, symGeneratorGenerateNextToken, symGeneratorGetSequenceCount,
-		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig, symDestroyConfig,
+		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symTokenizerGetEosTokenIDs, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig, symDestroyConfig,
 		symLoadImage, symLoadImages, symLoadImagesFromBuffers, symDestroyImages, symCreateMultiModalProcessor, symDestroyMultiModalProcessor, symProcessorProcessImages, symDestroyNamedTensors, symCreateStringArray, symDestroyStringArray, symStringArrayAddString,
 		symProcessorProcessImagesAndPrompts); rc != 0 {
 		C.dlclose(handle)

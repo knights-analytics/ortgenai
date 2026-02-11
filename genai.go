@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -109,6 +110,7 @@ func (g *generator) addSequences(sequences *sequences) error {
 
 type tokenizer struct {
 	tokenizerPtr *C.OgaTokenizer
+	EOSTokenIDs  []int
 }
 
 func newTokenizerFromModel(model model) (tokenizer, error) {
@@ -120,7 +122,23 @@ func newTokenizerFromModel(model model) (tokenizer, error) {
 	if cTokenizer == nil {
 		return tokenizer{}, errors.New("CreateOgaTokenizer returned nil without error")
 	}
-	return tokenizer{tokenizerPtr: cTokenizer}, nil
+	var cIDs *C.int32_t
+	var cCount C.size_t
+
+	res = C.OgaTokenizerGetEosTokenIds(cTokenizer, (**C.int32_t)(unsafe.Pointer(&cIDs)), &cCount)
+	if err := OgaResultToError(res); err != nil {
+		return tokenizer{}, fmt.Errorf("OgaTokenizerGetEosTokenIds failed: %w", err)
+	}
+	if cIDs == nil {
+		return tokenizer{}, errors.New("OgaTokenizerGetEosTokenIds returned nil without error")
+	}
+	n := int(cCount)
+	out := make([]int, n)
+	arr := (*[1 << 30]C.int32_t)(unsafe.Pointer(cIDs))
+	for i := 0; i < n; i++ {
+		out[i] = int(arr[i])
+	}
+	return tokenizer{tokenizerPtr: cTokenizer, EOSTokenIDs: out}, nil
 }
 
 func (t *tokenizer) encode(prompt string, sequences *sequences) error {
@@ -196,15 +214,10 @@ func (e MaxLengthReachedError) Error() string {
 	return "generation stopped: max length reached"
 }
 
-type ContextCancelledError struct{}
-
-func (s ContextCancelledError) Error() string {
-	return "generation stopped: context cancelled"
-}
-
 type SequenceDelta struct {
-	Sequence int
-	Token    string
+	Sequence   int
+	Token      string
+	EOSReached bool
 }
 
 // Statistics captures generation performance metrics.
@@ -374,7 +387,7 @@ func sendGenerationError(errChan chan<- error, err error) {
 
 // startGenerationGoroutine launches the unified generation loop and returns output and error channels.
 // Assumes the session mutex is already locked; it will be unlocked inside the goroutine when done.
-func startGenerationGoroutine(ctx context.Context, s *Session, generator *generator, sequences *sequences, tensors *NamedTensors, tokenizerStreams []*tokenizerStream, seqCount int, maxLength int) (<-chan SequenceDelta, <-chan error) {
+func (s *Session) startGenerationGoroutine(ctx context.Context, generator *generator, sequences *sequences, tensors *NamedTensors, tokenizerStreams []*tokenizerStream, seqCount int, maxLength int) (<-chan SequenceDelta, <-chan error) {
 	outputChan := make(chan SequenceDelta, 10)
 	errChan := make(chan error, 1)
 	go func() {
@@ -430,7 +443,6 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 		for {
 			select {
 			case <-ctx.Done():
-				sendGenerationError(errChan, ContextCancelledError{})
 				return
 			default:
 			}
@@ -457,9 +469,20 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 			}
 
 			// Iterate over each sequence in the batch
+			completeSequences := map[int]bool{}
+
 			for i := 0; i < seqCount; i++ {
+				if completeSequences[i] {
+					continue
+				}
 				lastToken, ok := getLastToken(generator, i)
 				if !ok {
+					continue
+				}
+
+				if slices.Contains(s.tokenizer.EOSTokenIDs, int(lastToken)) {
+					completeSequences[i] = true
+					outputChan <- SequenceDelta{Sequence: i, EOSReached: true} // notify EOS reached for this sequence
 					continue
 				}
 
@@ -478,11 +501,7 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 				}
 				s.statistics.CumulativeTokens++
 				runTokenCount++
-
 				// normalization: skip leading spaces for first token, avoid repeated '.' at end
-				if decoded == "" {
-					continue
-				}
 				if !firstEmitted[i] {
 					trim := strings.TrimLeft(decoded, " ")
 					if trim == "" {
@@ -500,7 +519,6 @@ func startGenerationGoroutine(ctx context.Context, s *Session, generator *genera
 				select {
 				case outputChan <- SequenceDelta{Sequence: i, Token: decoded}:
 				case <-ctx.Done():
-					sendGenerationError(errChan, ContextCancelledError{})
 					return
 				}
 			}
@@ -545,7 +563,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 		return nil, nil, fmt.Errorf("failed to add sequences to generator: %w", err)
 	}
 
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, sequences, nil, tokenizerStreams, len(messages), generationOptions.MaxLength)
+	outputChan, errChan := s.startGenerationGoroutine(ctx, generator, sequences, nil, tokenizerStreams, len(messages), generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 
@@ -625,7 +643,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		}
 		tokenizerStreams = append(tokenizerStreams, ts)
 	}
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, nil, tensors, tokenizerStreams, numSeq, generationOptions.MaxLength)
+	outputChan, errChan := s.startGenerationGoroutine(ctx, generator, nil, tensors, tokenizerStreams, numSeq, generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 

@@ -125,11 +125,15 @@ func TestGeneration(t *testing.T) {
 	var secondSequenceOutput []string
 
 	for token := range generateChan {
-		switch token.Sequence {
-		case 0:
-			firstSequenceOutput = append(firstSequenceOutput, token.Token)
-		case 1:
-			secondSequenceOutput = append(secondSequenceOutput, token.Token)
+		if !token.EOSReached {
+			switch token.Sequence {
+			case 0:
+				firstSequenceOutput = append(firstSequenceOutput, token.Token)
+			case 1:
+				secondSequenceOutput = append(secondSequenceOutput, token.Token)
+			}
+		} else {
+			fmt.Printf("EOS token reached for sequence %d\n", token.Sequence)
 		}
 	}
 	for err := range errChan {

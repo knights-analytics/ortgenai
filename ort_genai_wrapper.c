@@ -28,6 +28,7 @@ int SetGenAiApi(void* createModel,
 			void* generatorGetSequenceData,
 			void* tokenizerStreamDecode,
 			void* isDone,
+			void* tokenizerGetEosTokenIds,
 			// Config
 			void* createConfig,
 			void* configClearProviders,
@@ -55,7 +56,7 @@ int SetGenAiApi(void* createModel,
 		!applyChatTemplate || !destroyString || !createSequences || !destroySequences || !tokenizerEncode ||
 		!createGenerator || !destroyGenerator || !createGeneratorParams || !destroyGeneratorParams ||
 		!generatorParamsSetSearchNumber || !generatorAppendTokenSequences || !generatorSetInputs || !generatorGenerateNextToken ||
-		!generatorGetSequenceCount || !generatorGetSequenceData || !tokenizerStreamDecode || !isDone ||
+		!generatorGetSequenceCount || !generatorGetSequenceData || !tokenizerStreamDecode || !isDone || !tokenizerGetEosTokenIds ||
 		// Config
 		!createConfig || !configClearProviders || !configAppendProvider || !configSetProviderOption || !createModelFromConfig || !destroyConfig ||
 		// Multimodal
@@ -89,6 +90,7 @@ int SetGenAiApi(void* createModel,
 	g_api.GeneratorGetSequenceData = (PFN_OgaGeneratorGetSequenceData) generatorGetSequenceData;
 	g_api.TokenizerStreamDecode = (PFN_OgaTokenizerStreamDecode) tokenizerStreamDecode;
 	g_api.IsDone = (PFN_OgaGeneratorIsDone) isDone;
+	g_api.TokenizerGetEosTokenIds = (PFN_OgaTokenizerGetEosTokenIds) tokenizerGetEosTokenIds;
 	// Config
 	g_api.CreateConfig = (PFN_OgaCreateConfig) createConfig;
 	g_api.ConfigClearProviders = (PFN_OgaConfigClearProviders) configClearProviders;
@@ -246,6 +248,11 @@ OgaResult* TokenizerStreamDecode(OgaTokenizerStream* tokenizerStream, int32_t to
 bool IsDone(const OgaGenerator* generator) {
 	if (!g_initialized || !g_api.IsDone) return false;
 	return g_api.IsDone(generator);
+}
+
+OgaResult* OgaTokenizerGetEosTokenIds(const OgaTokenizer* tokenizer, const int32_t** eos_token_ids, size_t* token_count) {
+    if (!g_initialized || !g_api.TokenizerGetEosTokenIds) return NULL;
+    return g_api.TokenizerGetEosTokenIds(tokenizer, eos_token_ids, token_count);
 }
 
 // Config thin wrappers

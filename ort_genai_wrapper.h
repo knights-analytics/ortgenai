@@ -53,6 +53,7 @@ typedef size_t (*PFN_OgaGeneratorGetSequenceCount)(const OgaGenerator*, size_t);
 typedef const int32_t* (*PFN_OgaGeneratorGetSequenceData)(const OgaGenerator*, size_t);
 typedef OgaResult* (*PFN_OgaTokenizerStreamDecode)(OgaTokenizerStream*, int32_t, const char**);
 typedef bool (*PFN_OgaGeneratorIsDone)(const OgaGenerator*);
+typedef OgaResult* (*PFN_OgaTokenizerGetEosTokenIds)(const OgaTokenizer*, const int32_t** , size_t*);
 
 // Config-related API
 typedef OgaResult* (*PFN_OgaCreateConfig)(const char*, OgaConfig**);
@@ -103,6 +104,7 @@ typedef struct GenAiApiTable {
 	PFN_OgaGeneratorGetSequenceData GeneratorGetSequenceData;
 	PFN_OgaTokenizerStreamDecode TokenizerStreamDecode;
 	PFN_OgaGeneratorIsDone IsDone;
+    PFN_OgaTokenizerGetEosTokenIds TokenizerGetEosTokenIds;
 	// Config
 	PFN_OgaCreateConfig CreateConfig;
 	PFN_OgaConfigClearProviders ConfigClearProviders;
@@ -152,6 +154,7 @@ int SetGenAiApi(void* createModel,
 	void* generatorGetSequenceData,
 	void* tokenizerStreamDecode,
 	void* isDone,
+    void* tokenizerGetEosTokenIds,
 	// Config
 	void* createConfig,
 	void* configClearProviders,
@@ -205,6 +208,7 @@ size_t GeneratorGetSequenceCount(const OgaGenerator* generator, size_t sequence_
 const int32_t* GeneratorGetSequenceData(const OgaGenerator* generator, size_t sequence_index);
 OgaResult* TokenizerStreamDecode(OgaTokenizerStream* tokenizerStream, int32_t token, const char** output);
 bool IsDone(const OgaGenerator* generator);
+OgaResult* OgaTokenizerGetEosTokenIds(const OgaTokenizer* tokenizer, const int32_t** eos_token_ids, size_t* token_count);
 
 // Config thin wrappers
 OgaResult* CreateOgaConfig(const char* config_path, OgaConfig** out);
