@@ -206,6 +206,11 @@ func InitializeGenAiLibrary() error {
 		C.dlclose(handle)
 		return fmt.Errorf("missing OgaCreateModelFromConfig")
 	}
+	symDestroyConfig := createSym(handle, "OgaDestroyConfig")
+	if symDestroyConfig == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaDestroyConfig")
+	}
 
 	// Multimodal symbols
 	symLoadImage := createSym(handle, "OgaLoadImage")
@@ -273,7 +278,7 @@ func InitializeGenAiLibrary() error {
 		symCreateTokenizerStream, symDestroyTokenizerStream, symApplyChatTemplate, symDestroyString, symCreateSequence, symDestroySequence,
 		symTokenizerEncode, symCreateGenerator, symDestroyGenerator, symCreateGeneratorParams, symDestroyGeneratorParams,
 		symGeneratorParamsSetSearchNumber, symGeneratorAppendTokenSequences, symGeneratorSetInputs, symGeneratorGenerateNextToken, symGeneratorGetSequenceCount,
-		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig,
+		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig, symDestroyConfig,
 		symLoadImage, symLoadImages, symLoadImagesFromBuffers, symDestroyImages, symCreateMultiModalProcessor, symDestroyMultiModalProcessor, symProcessorProcessImages, symDestroyNamedTensors, symCreateStringArray, symDestroyStringArray, symStringArrayAddString,
 		symProcessorProcessImagesAndPrompts); rc != 0 {
 		C.dlclose(handle)

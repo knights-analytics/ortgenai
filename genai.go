@@ -278,28 +278,44 @@ func (t *tokenizer) tokenizeMessages(messages [][]Message) (*sequences, []*token
 	if cSequences == nil {
 		return nil, nil, errors.New("CreateOgaSequences returned nil without error")
 	}
-	sequences := &sequences{sequencesPtr: cSequences}
+	sequencesInstance := &sequences{sequencesPtr: cSequences}
 	tokenizerStreams := make([]*tokenizerStream, 0, len(messages))
 
 	for _, message := range messages {
 		messageJSON, err := json.Marshal(message)
 		if err != nil {
+			tokenizeCleanup(sequencesInstance, tokenizerStreams)
 			return nil, nil, fmt.Errorf("failed to marshal input message: %w", err)
 		}
 		prompt, templateErr := t.ApplyChatTemplate(messageJSON, true)
 		if templateErr != nil {
+			tokenizeCleanup(sequencesInstance, tokenizerStreams)
 			return nil, nil, fmt.Errorf("failed to apply chat template: %w", templateErr)
 		}
-		if err = t.encode(prompt, sequences); err != nil {
+		if err = t.encode(prompt, sequencesInstance); err != nil {
+			tokenizeCleanup(sequencesInstance, tokenizerStreams)
 			return nil, nil, fmt.Errorf("encode failed: %w", err)
 		}
 		stream, err := t.createTokenizerStream()
 		if err != nil {
+			tokenizeCleanup(sequencesInstance, tokenizerStreams)
 			return nil, nil, fmt.Errorf("createTokenizerStream failed: %w", err)
 		}
 		tokenizerStreams = append(tokenizerStreams, stream)
 	}
-	return sequences, tokenizerStreams, nil
+	return sequencesInstance, tokenizerStreams, nil
+}
+
+func tokenizeCleanup(sequencesInstance *sequences, tokenizerStreams []*tokenizerStream) {
+	if sequencesInstance.sequencesPtr != nil {
+		C.DestroyOgaSequences(sequencesInstance.sequencesPtr)
+		sequencesInstance.sequencesPtr = nil
+	}
+	for _, ts := range tokenizerStreams {
+		if ts != nil {
+			ts.destroy()
+		}
+	}
 }
 
 func (s *Session) createGenerator(generationOptions *GenerationOptions) (*generator, error) {
@@ -499,10 +515,19 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
+		if sequences != nil && sequences.sequencesPtr != nil {
+			C.DestroyOgaSequences(sequences.sequencesPtr)
+		}
+		for _, ts := range tokenizerStreams {
+			ts.destroy()
+		}
 		s.mutex.Unlock()
 		return nil, nil, err
 	}
 	if err = generator.addSequences(sequences); err != nil {
+		for _, ts := range tokenizerStreams {
+			ts.destroy()
+		}
 		generator.destroy()
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to add sequences to generator: %w", err)
@@ -561,6 +586,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
+		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to create generator: %w", err)
 	}
 
@@ -627,6 +653,7 @@ func CreateGenerativeSessionAdvanced(configDirectoryPath string, providers []str
 	if cfg == nil {
 		return nil, errors.New("CreateOgaConfig returned nil without error")
 	}
+	defer C.DestroyOgaConfig(cfg)
 
 	// Clear default providers to allow explicit configuration
 	res = C.OgaConfigClearProviders(cfg)

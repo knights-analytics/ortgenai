@@ -60,6 +60,7 @@ typedef OgaResult* (*PFN_OgaConfigClearProviders)(OgaConfig*);
 typedef OgaResult* (*PFN_OgaConfigAppendProvider)(OgaConfig*, const char*);
 typedef OgaResult* (*PFN_OgaConfigSetProviderOption)(OgaConfig*, const char*, const char*, const char*);
 typedef OgaResult* (*PFN_OgaCreateModelFromConfig)(const OgaConfig*, OgaModel**);
+typedef void (*PFN_OgaDestroyConfig)(OgaConfig*);
 
 // Multimodal API
 typedef OgaResult* (*PFN_OgaLoadImage)(const char*, OgaImages**);
@@ -108,6 +109,7 @@ typedef struct GenAiApiTable {
 	PFN_OgaConfigAppendProvider ConfigAppendProvider;
 	PFN_OgaConfigSetProviderOption ConfigSetProviderOption;
 	PFN_OgaCreateModelFromConfig CreateModelFromConfig;
+	PFN_OgaDestroyConfig DestroyConfig;
 	// Multimodal
 	PFN_OgaLoadImage LoadImage;
 	PFN_OgaLoadImages LoadImages;
@@ -156,6 +158,7 @@ int SetGenAiApi(void* createModel,
 	void* configAppendProvider,
 	void* configSetProviderOption,
 	void* createModelFromConfig,
+	void* destroyConfig,
 	// Multimodal
 	void* loadImage,
 	void* loadImages,
@@ -209,6 +212,7 @@ OgaResult* OgaConfigClearProviders(OgaConfig* config);
 OgaResult* OgaConfigAppendProvider(OgaConfig* config, const char* provider);
 OgaResult* OgaConfigSetProviderOption(OgaConfig* config, const char* provider, const char* key, const char* value);
 OgaResult* CreateOgaModelFromConfig(const OgaConfig* config, OgaModel** out);
+void DestroyOgaConfig(OgaConfig* config);
 
 // Multimodal thin wrappers
 OgaResult* LoadOgaImage(const char* image_path, OgaImages** out);

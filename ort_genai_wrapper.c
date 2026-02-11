@@ -56,7 +56,7 @@ int SetGenAiApi(void* createModel,
 		!generatorParamsSetSearchNumber || !generatorAppendTokenSequences || !generatorSetInputs || !generatorGenerateNextToken ||
 		!generatorGetSequenceCount || !generatorGetSequenceData || !tokenizerStreamDecode || !isDone ||
 		// Config
-		!createConfig || !configClearProviders || !configAppendProvider || !configSetProviderOption || !createModelFromConfig ||
+		!createConfig || !configClearProviders || !configAppendProvider || !configSetProviderOption || !createModelFromConfig || !destroyConfig ||
 		// Multimodal
 		!loadImage || !loadImages || !loadImagesFromBuffers || !destroyImages ||
 		!createMultiModalProcessor || !destroyMultiModalProcessor || !processorProcessImages ||
@@ -94,6 +94,7 @@ int SetGenAiApi(void* createModel,
 	g_api.ConfigAppendProvider = (PFN_OgaConfigAppendProvider) configAppendProvider;
 	g_api.ConfigSetProviderOption = (PFN_OgaConfigSetProviderOption) configSetProviderOption;
 	g_api.CreateModelFromConfig = (PFN_OgaCreateModelFromConfig) createModelFromConfig;
+	g_api.DestroyConfig = (PFN_OgaDestroyConfig) destroyConfig;
 	// Multimodal
 	g_api.LoadImage = (PFN_OgaLoadImage) loadImage;
 	g_api.LoadImages = (PFN_OgaLoadImages) loadImages;
@@ -270,6 +271,12 @@ OgaResult* OgaConfigSetProviderOption(OgaConfig* config, const char* provider, c
 OgaResult* CreateOgaModelFromConfig(const OgaConfig* config, OgaModel** out) {
 	if (!g_initialized || !g_api.CreateModelFromConfig) return NULL;
 	return g_api.CreateModelFromConfig(config, out);
+}
+
+void DestroyOgaConfig(OgaConfig* config) {
+	if (!config) return;
+	if (!g_initialized || !g_api.DestroyConfig) return;
+	g_api.DestroyConfig(config);
 }
 
 // Multimodal thin wrappers

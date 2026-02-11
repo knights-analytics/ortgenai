@@ -215,6 +215,7 @@ func LoadImages(imagePaths []string) (*Images, error) {
 		res = C.AddStringToOgaStringArray(cStringArray, cPath)
 		C.free(unsafe.Pointer(cPath))
 		if err := OgaResultToError(res); err != nil {
+			// cStringArray will be destroyed by defer C.DestroyOgaStringArray(cStringArray)
 			return nil, fmt.Errorf("AddStringToOgaStringArray failed: %w", err)
 		}
 	}
@@ -331,6 +332,9 @@ func (p *multiModalProcessor) ProcessImages(prompt string, images *Images) (*Nam
 	defer C.free(unsafe.Pointer(promptC))
 	res := C.ProcessOgaImages(p.processorPtr, promptC, images.imagesPtr, &cTensors)
 	if err := OgaResultToError(res); err != nil {
+		if cTensors != nil {
+			C.DestroyOgaNamedTensors(cTensors)
+		}
 		return nil, fmt.Errorf("ProcessImages failed: %w", err)
 	}
 	if cTensors == nil {
