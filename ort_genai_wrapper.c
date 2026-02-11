@@ -34,6 +34,7 @@ int SetGenAiApi(void* createModel,
 			void* configAppendProvider,
 			void* configSetProviderOption,
 			void* createModelFromConfig,
+			void* destroyConfig,
 			// Multimodal
 			void* loadImage,
 			void* loadImages,
