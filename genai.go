@@ -545,7 +545,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 		return nil, nil, fmt.Errorf("failed to add sequences to generator: %w", err)
 	}
 
-	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, sequences, tokenizerStreams, len(messages), generationOptions.MaxLength)
+	outputChan, errChan := startGenerationGoroutine(ctx, s, generator, sequences, nil, tokenizerStreams, len(messages), generationOptions.MaxLength)
 	return outputChan, errChan, nil
 }
 
