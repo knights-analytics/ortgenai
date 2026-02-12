@@ -440,6 +440,9 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 			initialCounts[i] = int(C.GeneratorGetSequenceCount(generator.generatorPtr, C.size_t(i)))
 		}
 
+		// Iterate over each sequence in the batch
+		completeSequences := map[int]bool{}
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -467,9 +470,6 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 				sendGenerationError(errChan, err)
 				return
 			}
-
-			// Iterate over each sequence in the batch
-			completeSequences := map[int]bool{}
 
 			for i := 0; i < seqCount; i++ {
 				if completeSequences[i] {
