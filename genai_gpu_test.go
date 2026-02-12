@@ -21,7 +21,7 @@ func TestGenerationGPU(t *testing.T) {
 		}
 	}()
 
-	modelPath := "./_models/phi3.5"
+	modelPath := "./_models/phi3.5gpu" // use the gpu optimized model
 
 	providers := []string{"cuda"}
 	providerOptions := map[string]map[string]string{}
@@ -30,19 +30,10 @@ func TestGenerationGPU(t *testing.T) {
 		t.Fatalf("failed to create advanced session: %v", err)
 	}
 
-	inputMessagesFirstGeneration := []Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: "What is the capital of France?"},
-	}
-	inputMessagesSecondGeneration := []Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: "What is the capital of Germany?"},
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	options := &GenerationOptions{
-		MaxLength: 512,
+		MaxLength: 5024,
 		BatchSize: 2,
 	}
 	generateChan, errChan, err := session.Generate(ctx, [][]Message{inputMessagesFirstGeneration, inputMessagesSecondGeneration}, options)
@@ -53,11 +44,15 @@ func TestGenerationGPU(t *testing.T) {
 	var secondSequenceOutput []string
 
 	for token := range generateChan {
-		switch token.Sequence {
-		case 0:
-			firstSequenceOutput = append(firstSequenceOutput, token.Token)
-		case 1:
-			secondSequenceOutput = append(secondSequenceOutput, token.Token)
+		if !token.EOSReached {
+			switch token.Sequence {
+			case 0:
+				firstSequenceOutput = append(firstSequenceOutput, token.Token)
+			case 1:
+				secondSequenceOutput = append(secondSequenceOutput, token.Token)
+			}
+		} else {
+			fmt.Printf("EOS token reached for sequence %d\n", token.Sequence)
 		}
 	}
 	for err := range errChan {

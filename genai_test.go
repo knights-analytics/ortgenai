@@ -74,6 +74,24 @@ var testJSONs = []string{
 }`,
 }
 
+var inputMessagesFirstGeneration = []Message{
+	{Role: "system", Content: "You are a helpful assistant."},
+	{Role: "user", Content: fmt.Sprintf(`Hello, I have the following two
+		jsons that represent two users:
+
+		first: %s
+
+		second: %s
+
+		Please compare them and tell me the main differences between these users.
+		`, testJSONs[0], testJSONs[1])},
+}
+
+var inputMessagesSecondGeneration = []Message{
+	{Role: "system", Content: "You are a helpful assistant."},
+	{Role: "user", Content: "What is the capital of France?"},
+}
+
 func TestGeneration(t *testing.T) {
 	SetSharedLibraryPath(getLibraryPath())
 
@@ -91,24 +109,6 @@ func TestGeneration(t *testing.T) {
 	session, err := CreateGenerativeSession(modelPath)
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
-	}
-
-	inputMessagesFirstGeneration := []Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: fmt.Sprintf(`Hello, I have the following two
-		jsons that represent two users:
-
-		first: %s
-
-		second: %s
-
-		Please compare them and tell me the main differences between these users.
-		`, testJSONs[0], testJSONs[1])},
-	}
-
-	inputMessagesSecondGeneration := []Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		{Role: "user", Content: "What is the capital of France?"},
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

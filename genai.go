@@ -388,7 +388,7 @@ func sendGenerationError(errChan chan<- error, err error) {
 // startGenerationGoroutine launches the unified generation loop and returns output and error channels.
 // Assumes the session mutex is already locked; it will be unlocked inside the goroutine when done.
 func (s *Session) startGenerationGoroutine(ctx context.Context, generator *generator, sequences *sequences, tensors *NamedTensors, tokenizerStreams []*tokenizerStream, seqCount int, maxLength int) (<-chan SequenceDelta, <-chan error) {
-	outputChan := make(chan SequenceDelta, 10)
+	outputChan := make(chan SequenceDelta, 1000)
 	errChan := make(chan error, 1)
 	go func() {
 		defer close(outputChan)
