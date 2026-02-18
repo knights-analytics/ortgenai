@@ -472,6 +472,12 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 			}
 
 			for i := 0; i < seqCount; i++ {
+				select {
+				case <-ctx.Done():
+					return
+					default:
+				}
+
 				if completeSequences[i] {
 					continue
 				}
@@ -490,6 +496,9 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 				if decodeErr != nil {
 					sendGenerationError(errChan, decodeErr)
 					return
+				}
+				if decoded == "" {
+					continue
 				}
 				// stats
 				if runFirstTokenTimes[i].IsZero() {
