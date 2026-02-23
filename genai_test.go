@@ -113,9 +113,15 @@ func TestGeneration(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	temperature := 0.0
+	topP := 0.9
+	seed := 42
 	options := &GenerationOptions{
-		MaxLength: 2024,
-		BatchSize: 2,
+		MaxLength:   2024,
+		BatchSize:   2,
+		Temperature: &temperature,
+		TopP:        &topP,
+		Seed:        &seed,
 	}
 	generateChan, errChan, err := session.Generate(ctx, [][]Message{inputMessagesFirstGeneration, inputMessagesSecondGeneration}, options)
 	if err != nil {

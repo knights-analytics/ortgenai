@@ -58,8 +58,11 @@ func SetSharedLibraryPath(path string) {
 }
 
 type GenerationOptions struct {
-	MaxLength int
-	BatchSize int
+	MaxLength   int
+	BatchSize   int
+	Temperature *float64
+	TopP        *float64
+	Seed        *int
 }
 
 var defaultMaxLength = 2024
@@ -362,6 +365,27 @@ func (s *Session) createGenerator(generationOptions *GenerationOptions) (*genera
 		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(batch_size) failed: %w", err)
 	}
 
+	temperatureName := C.CString("temperature")
+	defer C.free(unsafe.Pointer(temperatureName))
+	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, temperatureName, C.double(*generationOptions.Temperature))
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(temperature) failed: %w", err)
+	}
+
+	topPName := C.CString("top_p")
+	defer C.free(unsafe.Pointer(topPName))
+	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, topPName, C.double(*generationOptions.TopP))
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(top_p) failed: %w", err)
+	}
+
+	seedName := C.CString("random_seed")
+	defer C.free(unsafe.Pointer(seedName))
+	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, seedName, C.double(*generationOptions.Seed))
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(random_seed) failed: %w", err)
+	}
+
 	// create a generator with those params
 	var cGenerator *C.OgaGenerator
 	res = C.CreateOgaGenerator(s.model.modelPtr, cGeneratorParams, &cGenerator)
@@ -475,7 +499,7 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 				select {
 				case <-ctx.Done():
 					return
-					default:
+				default:
 				}
 
 				if completeSequences[i] {
@@ -536,6 +560,19 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 	return outputChan, errChan
 }
 
+func setDefaultGenerationOptions(generationOptions *GenerationOptions) {
+	if generationOptions.Temperature == nil {
+		generationOptions.Temperature = new(float64)
+	}
+	if generationOptions.TopP == nil {
+		topP := 1.0
+		generationOptions.TopP = &topP
+	}
+	if generationOptions.Seed == nil {
+		generationOptions.Seed = new(int)
+	}
+}
+
 func (s *Session) Generate(ctx context.Context, messages [][]Message, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
 	s.mutex.Lock()
 	sequences, tokenizerStreams, tokenizeErr := s.tokenizer.tokenizeMessages(messages)
@@ -552,6 +589,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 	if generationOptions.BatchSize <= 0 {
 		generationOptions.BatchSize = len(messages)
 	}
+	setDefaultGenerationOptions(generationOptions)
 
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
@@ -621,6 +659,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 	if generationOptions.BatchSize != len(messages) {
 		generationOptions.BatchSize = len(messages)
 	}
+	setDefaultGenerationOptions(generationOptions)
 
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
