@@ -78,7 +78,7 @@ func main() {
     }()
 
     // Point to a local model folder compatible with ONNX Runtime GenAI
-    session, err := genai.CreateGenerativeSession("./models/phi3.5")
+    session, err := genai.CreateSession("./models/phi3.5")
     if err != nil {
         panic(fmt.Errorf("create session: %w", err))
     }
@@ -137,7 +137,7 @@ providerOptions := map[string]map[string]string{
     "cpu": {"intra_op_num_threads": "4"},
 }
 
-session, err := genai.CreateGenerativeSessionAdvanced(
+session, err := genai.CreateSessionWithOptions(
     "./path/to/config.json", // model/session config from GenAI tooling
     providers,
     providerOptions,
