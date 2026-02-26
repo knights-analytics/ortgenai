@@ -78,7 +78,7 @@ func main() {
     }()
 
     // Point to a local model folder compatible with ONNX Runtime GenAI
-    session, err := genai.CreateGenerativeSession("./_models/phi3.5")
+    session, err := genai.CreateGenerativeSession("./models/phi3.5")
     if err != nil {
         panic(fmt.Errorf("create session: %w", err))
     }

@@ -21,7 +21,7 @@ func TestGenerationGPU(t *testing.T) {
 		}
 	}()
 
-	modelPath := "./_models/phi3.5gpu" // use the gpu optimized model
+	modelPath := "./models/phi3.5gpu" // use the gpu optimized model
 
 	providers := []string{"cuda"}
 	providerOptions := map[string]map[string]string{}

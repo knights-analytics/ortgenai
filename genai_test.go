@@ -104,7 +104,7 @@ func TestGeneration(t *testing.T) {
 		}
 	}()
 
-	modelPath := "./_models/phi3.5"
+	modelPath := "./models/phi3.5"
 
 	session, err := CreateGenerativeSession(modelPath)
 	if err != nil {
@@ -279,7 +279,7 @@ func TestParseDataURI(t *testing.T) {
 // TestMultimodalGeneration tests the full multimodal pipeline.
 // Requires a vision-language model (e.g., phi-3.5-vision).
 func TestMultimodalGeneration(t *testing.T) {
-	visionModelPath := "./_models/phi3.5vision"
+	visionModelPath := "./models/phi3.5vision"
 	if _, err := os.Stat(visionModelPath); os.IsNotExist(err) {
 		t.Skip("Vision model not found at " + visionModelPath)
 	}
