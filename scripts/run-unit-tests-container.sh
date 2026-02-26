@@ -7,7 +7,7 @@ folder=/test/unit
 cd /build && \
 mkdir -p $folder && \
 
-model_dir="/build/_models/phi3.5"
+model_dir="/build/models/phi3.5"
 
 ./scripts/download-phi.sh "$model_dir"
 
