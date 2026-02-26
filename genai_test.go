@@ -106,7 +106,7 @@ func TestGeneration(t *testing.T) {
 
 	modelPath := "./models/phi3.5"
 
-	session, err := CreateGenerativeSession(modelPath)
+	session, err := CreateSession(modelPath)
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestMultimodalGeneration(t *testing.T) {
 		}
 	}()
 
-	session, err := CreateGenerativeSession(visionModelPath)
+	session, err := CreateSession(visionModelPath)
 	if err != nil {
 		t.Fatalf("failed to create session: %v", err)
 	}

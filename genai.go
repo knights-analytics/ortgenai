@@ -710,11 +710,11 @@ func (s *Session) Destroy() {
 	}
 }
 
-// CreateGenerativeSessionAdvanced builds a GenAI config from a config directory,
+// CreateSessionWithOptions builds a GenAI config from a config directory,
 // applies execution providers and options, creates the model and tokenizer, and returns a Session.
 // providers: list of EP names in priority order (e.g., ["cuda"], ["NvTensorRtRtx"], ["OpenVINO"]).
 // providerOptions: map of EP name -> map of key/value options.
-func CreateGenerativeSessionAdvanced(configDirectoryPath string, providers []string, providerOptions map[string]map[string]string) (*Session, error) {
+func CreateSessionWithOptions(configDirectoryPath string, providers []string, providerOptions map[string]map[string]string) (*Session, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
@@ -797,7 +797,7 @@ func initMultimodalProcessor(session *Session) error {
 	return nil
 }
 
-func CreateGenerativeSession(modelPath string) (*Session, error) {
+func CreateSession(modelPath string) (*Session, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
