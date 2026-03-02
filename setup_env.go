@@ -17,6 +17,7 @@ import (
 var genAiLibraryHandle unsafe.Pointer
 
 func platformCleanup() error {
+	engineApiAvailable = false
 	if genAiLibraryHandle == nil {
 		return nil
 	}
@@ -30,6 +31,7 @@ func platformCleanup() error {
 func createSym(handle unsafe.Pointer, name string) unsafe.Pointer {
 	cName := C.CString(name)
 	defer C.free(unsafe.Pointer(cName))
+	C.dlerror() // clear previous error per POSIX
 	sym := C.dlsym(handle, cName)
 	return sym
 }
@@ -296,6 +298,59 @@ func InitializeGenAiLibrary() error {
 		C.dlclose(handle)
 		return fmt.Errorf("SetGenAiApi failed with code %d", int(rc))
 	}
+
+	// Engine/Request API (optional — available in ORT GenAI >= 0.9.1)
+	initEngineApi(handle)
+
 	genAiLibraryHandle = handle
 	return nil
+}
+
+// engineApiAvailable is true if the OgaEngine continuous batching symbols were found.
+var engineApiAvailable bool
+
+// IsEngineApiAvailable reports whether the loaded ORT GenAI library supports the Engine API.
+func IsEngineApiAvailable() bool {
+	return engineApiAvailable
+}
+
+func initEngineApi(handle unsafe.Pointer) {
+	symCreateEngine := createSym(handle, "OgaCreateEngine")
+	symDestroyEngine := createSym(handle, "OgaDestroyEngine")
+	symEngineStep := createSym(handle, "OgaEngineStep")
+	symEngineHasPendingRequests := createSym(handle, "OgaEngineHasPendingRequests")
+	symEngineAddRequest := createSym(handle, "OgaEngineAddRequest")
+	symEngineRemoveRequest := createSym(handle, "OgaEngineRemoveRequest")
+	symCreateRequest := createSym(handle, "OgaCreateRequest")
+	symDestroyRequest := createSym(handle, "OgaDestroyRequest")
+	symRequestAddTokens := createSym(handle, "OgaRequestAddTokens")
+	symRequestSetOpaqueData := createSym(handle, "OgaRequestSetOpaqueData")
+	symRequestGetOpaqueData := createSym(handle, "OgaRequestGetOpaqueData")
+	symRequestHasUnseenTokens := createSym(handle, "OgaRequestHasUnseenTokens")
+	symRequestGetUnseenToken := createSym(handle, "OgaRequestGetUnseenToken")
+	symRequestIsDone := createSym(handle, "OgaRequestIsDone")
+
+	if symCreateEngine == nil || symDestroyEngine == nil ||
+		symEngineStep == nil || symEngineHasPendingRequests == nil ||
+		symEngineAddRequest == nil || symEngineRemoveRequest == nil ||
+		symCreateRequest == nil || symDestroyRequest == nil ||
+		symRequestAddTokens == nil || symRequestSetOpaqueData == nil ||
+		symRequestGetOpaqueData == nil || symRequestHasUnseenTokens == nil ||
+		symRequestGetUnseenToken == nil || symRequestIsDone == nil {
+		// Engine API not available in this library version — not an error.
+		return
+	}
+
+	rc := C.SetGenAiEngineApi(
+		symCreateEngine, symDestroyEngine,
+		symEngineStep, symEngineHasPendingRequests,
+		symEngineAddRequest, symEngineRemoveRequest,
+		symCreateRequest, symDestroyRequest,
+		symRequestAddTokens, symRequestSetOpaqueData,
+		symRequestGetOpaqueData, symRequestHasUnseenTokens,
+		symRequestGetUnseenToken, symRequestIsDone)
+	if rc != 0 {
+		return
+	}
+	engineApiAvailable = true
 }

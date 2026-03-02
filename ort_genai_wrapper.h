@@ -26,6 +26,8 @@ typedef struct OgaImages OgaImages;
 typedef struct OgaMultiModalProcessor OgaMultiModalProcessor;
 typedef struct OgaNamedTensors OgaNamedTensors;
 typedef struct OgaStringArray OgaStringArray;
+typedef struct OgaEngine OgaEngine;
+typedef struct OgaRequest OgaRequest;
 
 // Function pointer typedefs for the subset of GenAI C API we wrap.
 typedef OgaResult* (*PFN_OgaCreateModel)(const char*, OgaModel**);
@@ -78,6 +80,22 @@ typedef void (*PFN_OgaDestroyStringArray)(OgaStringArray*);
 typedef OgaResult* (*PFN_OgaStringArrayAddString)(OgaStringArray*, const char*);
 typedef OgaResult* (*PFN_OgaProcessorProcessImagesAndPrompts)(const OgaMultiModalProcessor*, const OgaStringArray*, const OgaImages*, OgaNamedTensors**);
 
+// Engine/Request API (continuous batching)
+typedef OgaResult* (*PFN_OgaCreateEngine)(OgaModel*, OgaEngine**);
+typedef void (*PFN_OgaDestroyEngine)(OgaEngine*);
+typedef OgaResult* (*PFN_OgaEngineStep)(OgaEngine*, OgaRequest**);
+typedef OgaResult* (*PFN_OgaEngineHasPendingRequests)(OgaEngine*, bool*);
+typedef OgaResult* (*PFN_OgaEngineAddRequest)(OgaEngine*, OgaRequest*);
+typedef OgaResult* (*PFN_OgaEngineRemoveRequest)(OgaEngine*, OgaRequest*);
+typedef OgaResult* (*PFN_OgaCreateRequest)(OgaGeneratorParams*, OgaRequest**);
+typedef void (*PFN_OgaDestroyRequest)(OgaRequest*);
+typedef OgaResult* (*PFN_OgaRequestAddTokens)(OgaRequest*, const OgaSequences*);
+typedef OgaResult* (*PFN_OgaRequestSetOpaqueData)(OgaRequest*, void*);
+typedef OgaResult* (*PFN_OgaRequestGetOpaqueData)(OgaRequest*, void**);
+typedef OgaResult* (*PFN_OgaRequestHasUnseenTokens)(const OgaRequest*, bool*);
+typedef OgaResult* (*PFN_OgaRequestGetUnseenToken)(OgaRequest*, int32_t*);
+typedef OgaResult* (*PFN_OgaRequestIsDone)(const OgaRequest*, bool*);
+
 // Aggregated API table mirroring the pattern used by OrtApi in onnxruntime_go.
 typedef struct GenAiApiTable {
 	PFN_OgaCreateModel        CreateModel;
@@ -127,6 +145,21 @@ typedef struct GenAiApiTable {
 	PFN_OgaDestroyStringArray DestroyStringArray;
 	PFN_OgaStringArrayAddString StringArrayAddString;
 	PFN_OgaProcessorProcessImagesAndPrompts ProcessorProcessImagesAndPrompts;
+	// Engine (continuous batching)
+	PFN_OgaCreateEngine CreateEngine;
+	PFN_OgaDestroyEngine DestroyEngine;
+	PFN_OgaEngineStep EngineStep;
+	PFN_OgaEngineHasPendingRequests EngineHasPendingRequests;
+	PFN_OgaEngineAddRequest EngineAddRequest;
+	PFN_OgaEngineRemoveRequest EngineRemoveRequest;
+	PFN_OgaCreateRequest CreateRequest;
+	PFN_OgaDestroyRequest DestroyRequest;
+	PFN_OgaRequestAddTokens RequestAddTokens;
+	PFN_OgaRequestSetOpaqueData RequestSetOpaqueData;
+	PFN_OgaRequestGetOpaqueData RequestGetOpaqueData;
+	PFN_OgaRequestHasUnseenTokens RequestHasUnseenTokens;
+	PFN_OgaRequestGetUnseenToken RequestGetUnseenToken;
+	PFN_OgaRequestIsDone RequestIsDone;
 } GenAiApiTable;
 
 // Sets the global function pointer table. All pointers must be non-null.
@@ -236,6 +269,34 @@ OgaResult* CreateOgaStringArray(OgaStringArray** out);
 void DestroyOgaStringArray(OgaStringArray* string_array);
 OgaResult* AddStringToOgaStringArray(OgaStringArray* string_array, const char* str);
 OgaResult* ProcessOgaImagesAndPrompts(const OgaMultiModalProcessor* processor,  const OgaStringArray* prompts, const OgaImages* images, OgaNamedTensors** out);
+
+// Engine API initialization (separate from SetGenAiApi for backward compat).
+// Returns 0 on success, non-zero on failure.
+int SetGenAiEngineApi(void* createEngine, void* destroyEngine,
+	void* engineStep, void* engineHasPendingRequests,
+	void* engineAddRequest, void* engineRemoveRequest,
+	void* createRequest, void* destroyRequest,
+	void* requestAddTokens, void* requestSetOpaqueData,
+	void* requestGetOpaqueData, void* requestHasUnseenTokens,
+	void* requestGetUnseenToken, void* requestIsDone);
+
+int GenAiEngineApiIsInitialized(void);
+
+// Engine thin wrappers
+OgaResult* CreateOgaEngine(OgaModel* model, OgaEngine** out);
+void DestroyOgaEngine(OgaEngine* engine);
+OgaResult* EngineStep(OgaEngine* engine, OgaRequest** request);
+OgaResult* EngineHasPendingRequests(OgaEngine* engine, bool* out);
+OgaResult* EngineAddRequest(OgaEngine* engine, OgaRequest* request);
+OgaResult* EngineRemoveRequest(OgaEngine* engine, OgaRequest* request);
+OgaResult* CreateOgaRequest(OgaGeneratorParams* params, OgaRequest** out);
+void DestroyOgaRequest(OgaRequest* request);
+OgaResult* RequestAddTokens(OgaRequest* request, const OgaSequences* tokens);
+OgaResult* RequestSetOpaqueData(OgaRequest* request, void* opaque_data);
+OgaResult* RequestGetOpaqueData(OgaRequest* request, void** opaque_data);
+OgaResult* RequestHasUnseenTokens(const OgaRequest* request, bool* out);
+OgaResult* RequestGetUnseenToken(OgaRequest* request, int32_t* out);
+OgaResult* RequestIsDone(const OgaRequest* request, bool* out);
 
 #ifdef __cplusplus
 } // extern "C"
