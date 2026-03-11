@@ -317,6 +317,14 @@ func (e *Engine) Destroy() {
 
 func (e *Engine) runStepLoop() {
 	defer e.wg.Done()
+	// If the loop exits unexpectedly (not via Stop), mark the engine as
+	// stopped so that subsequent Submit calls fail fast instead of hanging.
+	defer func() {
+		e.stopOnce.Do(func() {
+			e.stopped.Store(true)
+			close(e.stopCh)
+		})
+	}()
 
 	for {
 		// Drain all pending submissions first.
@@ -361,14 +369,11 @@ func (e *Engine) runStepLoop() {
 		var cReady *C.OgaRequest
 		res := C.EngineStep(e.enginePtr, &cReady)
 		if err := OgaResultToError(res); err != nil {
-			// Broadcast error to all active requests.
-			e.mu.Lock()
-			for _, req := range e.requests {
-				sendGenerationError(req.errChan, fmt.Errorf("EngineStep failed: %w", err))
-			}
-			e.mu.Unlock()
-			e.drainOnStop()
-			return
+			// EngineStep failed — error and remove all active requests, but
+			// keep the engine loop running. The failure is request-level (e.g.
+			// model couldn't process the input) not engine-level.
+			e.errorAndRemoveAllRequests(fmt.Errorf("EngineStep failed: %w", err))
+			continue
 		}
 
 		if cReady != nil {
@@ -503,6 +508,27 @@ func (e *Engine) finishRequest(cReady *C.OgaRequest, req *engineRequest) {
 	close(req.outputChan)
 	close(req.errChan)
 	req.destroy()
+}
+
+// errorAndRemoveAllRequests sends err to every active request's error channel,
+// removes each request from the C engine, and closes their channels.
+// The engine loop continues running after this call.
+func (e *Engine) errorAndRemoveAllRequests(err error) {
+	e.mu.Lock()
+	active := make(map[*C.OgaRequest]*engineRequest, len(e.requests))
+	for k, v := range e.requests {
+		active[k] = v
+	}
+	e.requests = make(map[*C.OgaRequest]*engineRequest)
+	e.mu.Unlock()
+
+	for ptr, req := range active {
+		sendGenerationError(req.errChan, err)
+		C.EngineRemoveRequest(e.enginePtr, ptr)
+		close(req.outputChan)
+		close(req.errChan)
+		req.destroy()
+	}
 }
 
 func (e *Engine) checkCancellations() {
