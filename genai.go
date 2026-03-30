@@ -57,12 +57,31 @@ func SetSharedLibraryPath(path string) {
 	onnxGenaiSharedLibraryPath = path
 }
 
+// GuidanceType specifies the constrained-generation strategy passed to OgaGeneratorParamsSetGuidance.
+type GuidanceType string
+
+const (
+	GuidanceTypeJSONSchema  GuidanceType = "json_schema"
+	GuidanceTypeRegex       GuidanceType = "regex"
+	GuidanceTypeLarkGrammar GuidanceType = "lark_grammar"
+)
+
+// Guidance configures constrained (guided) generation. Requires a recent OGA runtime.
+type Guidance struct {
+	Type GuidanceType
+	Data string
+	// EnableFFTokens speeds up generation by force-forwarding tokens that satisfy the grammar
+	// without calling the model. Only valid when BatchSize=1 and beam_size=1.
+	EnableFFTokens bool
+}
+
 type GenerationOptions struct {
 	MaxLength   int
 	BatchSize   int
 	Temperature *float64
 	TopP        *float64
 	Seed        *int
+	Guidance    *Guidance
 }
 
 var defaultMaxLength = 2024
@@ -243,29 +262,16 @@ func (g *generator) IsDone() bool {
 	return bool(C.IsDone(g.generatorPtr))
 }
 
-// getLastToken returns the last token for the sequence at index seqIdx.
-// It returns ok=false if the sequence has no tokens or data is unavailable.
-func getLastToken(g *generator, seqIdx int) (C.int32_t, bool) {
-	numTokens := C.GeneratorGetSequenceCount(g.generatorPtr, C.size_t(seqIdx))
-	if numTokens == 0 {
-		return 0, false
-	}
-	seqData := C.GeneratorGetSequenceData(g.generatorPtr, C.size_t(seqIdx))
-	if seqData == nil {
-		return 0, false
-	}
-	arr := (*[1 << 30]C.int32_t)(unsafe.Pointer(seqData))
-	return arr[numTokens-1], true
-}
-
-func (t *tokenizer) ApplyChatTemplate(inputMessages []byte, addGenerationPrompt bool) (string, error) {
+func (t *tokenizer) ApplyChatTemplate(inputMessages []byte, tools []byte, addGenerationPrompt bool) (string, error) {
 	if t.tokenizerPtr == nil {
 		return "", errors.New("tokenizer is not initialized")
 	}
 	cInput := C.CString(string(inputMessages))
 	defer C.free(unsafe.Pointer(cInput))
+	cTools := C.CString(string(tools))
+	defer C.free(unsafe.Pointer(cTools))
 	var cOutput *C.char
-	res := C.ApplyOgaTokenizerChatTemplate(t.tokenizerPtr, nil, cInput, nil, C.bool(addGenerationPrompt), &cOutput)
+	res := C.ApplyOgaTokenizerChatTemplate(t.tokenizerPtr, nil, cInput, cTools, C.bool(addGenerationPrompt), &cOutput)
 	if err := OgaResultToError(res); err != nil {
 		return "", fmt.Errorf("ApplyOgaChatTemplate failed: %w", err)
 	}
@@ -289,12 +295,21 @@ func (t *tokenizer) createTokenizerStream() (*tokenizerStream, error) {
 	return &tokenizerStream{streamPtr: cStream}, nil
 }
 
-func (t *tokenizer) tokenizeMessages(messages [][]Message) (*sequences, []*tokenizerStream, error) {
+func (t *tokenizer) tokenizeMessages(messages [][]Message, tools []string) (*sequences, []*tokenizerStream, error) {
 	if t.tokenizerPtr == nil {
 		return nil, nil, errors.New("tokenizer is not initialized")
 	}
 	if len(messages) == 0 {
 		return nil, nil, errors.New("no messages provided")
+	}
+
+	rawTools := make([]json.RawMessage, len(tools))
+	for i, t := range tools {
+		rawTools[i] = json.RawMessage(t)
+	}
+	toolsJSON, err := json.Marshal(rawTools)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
 	}
 
 	var cSequences *C.OgaSequences
@@ -314,7 +329,7 @@ func (t *tokenizer) tokenizeMessages(messages [][]Message) (*sequences, []*token
 			tokenizeCleanup(sequencesInstance, tokenizerStreams)
 			return nil, nil, fmt.Errorf("failed to marshal input message: %w", err)
 		}
-		prompt, templateErr := t.ApplyChatTemplate(messageJSON, true)
+		prompt, templateErr := t.ApplyChatTemplate(messageJSON, toolsJSON, true)
 		if templateErr != nil {
 			tokenizeCleanup(sequencesInstance, tokenizerStreams)
 			return nil, nil, fmt.Errorf("failed to apply chat template: %w", templateErr)
@@ -384,6 +399,17 @@ func (s *Session) createGenerator(generationOptions *GenerationOptions) (*genera
 	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, seedName, C.double(*generationOptions.Seed))
 	if err := OgaResultToError(res); err != nil {
 		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(random_seed) failed: %w", err)
+	}
+
+	if generationOptions.Guidance != nil {
+		cGuidanceType := C.CString(string(generationOptions.Guidance.Type))
+		defer C.free(unsafe.Pointer(cGuidanceType))
+		cGuidanceData := C.CString(generationOptions.Guidance.Data)
+		defer C.free(unsafe.Pointer(cGuidanceData))
+		res = C.GeneratorParamsSetGuidance(cGeneratorParams, cGuidanceType, cGuidanceData, C.bool(generationOptions.Guidance.EnableFFTokens))
+		if err := OgaResultToError(res); err != nil {
+			return nil, fmt.Errorf("GeneratorParamsSetGuidance failed: %w", err)
+		}
 	}
 
 	// create a generator with those params
@@ -464,6 +490,12 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 			initialCounts[i] = int(C.GeneratorGetSequenceCount(generator.generatorPtr, C.size_t(i)))
 		}
 
+		// prevCounts tracks how many tokens each sequence had before the last GenerateNextToken
+		// call. When ff-tokens are enabled the call may advance a sequence by more than one
+		// token; we must process every new token in order so the tokenizer stream stays in sync.
+		prevCounts := make([]int, seqCount)
+		copy(prevCounts, initialCounts)
+
 		// Iterate over each sequence in the batch
 		completeSequences := map[int]bool{}
 
@@ -505,55 +537,73 @@ func (s *Session) startGenerationGoroutine(ctx context.Context, generator *gener
 				if completeSequences[i] {
 					continue
 				}
-				lastToken, ok := getLastToken(generator, i)
-				if !ok {
-					continue
-				}
 
-				if slices.Contains(s.tokenizer.EOSTokenIDs, int(lastToken)) {
-					completeSequences[i] = true
-					outputChan <- SequenceDelta{Sequence: i, EOSReached: true} // notify EOS reached for this sequence
+				newCount := int(C.GeneratorGetSequenceCount(generator.generatorPtr, C.size_t(i)))
+				if newCount <= prevCounts[i] {
 					continue
 				}
+				seqData := C.GeneratorGetSequenceData(generator.generatorPtr, C.size_t(i))
+				if seqData == nil {
+					continue
+				}
+				arr := (*[1 << 30]C.int32_t)(unsafe.Pointer(seqData))
 
-				decoded, decodeErr := tokenizerStreams[i].Decode(lastToken)
-				if decodeErr != nil {
-					sendGenerationError(errChan, decodeErr)
-					return
-				}
-				if decoded == "" {
-					continue
-				}
-				// stats
-				if runFirstTokenTimes[i].IsZero() {
-					runFirstTokenTimes[i] = time.Now()
-					prefill := runFirstTokenTimes[i].Sub(runStart).Seconds()
-					s.statistics.CumulativePrefillSum += prefill
-					s.statistics.CumulativePrefillCount++
-					s.statistics.AvgPrefillSeconds = s.statistics.CumulativePrefillSum / float64(s.statistics.CumulativePrefillCount)
-				}
-				s.statistics.CumulativeTokens++
-				runTokenCount++
-				// normalization: skip leading spaces for first token, avoid repeated '.' at end
-				if !firstEmitted[i] {
-					trim := strings.TrimLeft(decoded, " ")
-					if trim == "" {
+				for j := prevCounts[i]; j < newCount; j++ {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					token := arr[j]
+
+					if slices.Contains(s.tokenizer.EOSTokenIDs, int(token)) {
+						completeSequences[i] = true
+						prevCounts[i] = newCount
+						outputChan <- SequenceDelta{Sequence: i, EOSReached: true}
+						break
+					}
+
+					decoded, decodeErr := tokenizerStreams[i].Decode(token)
+					if decodeErr != nil {
+						sendGenerationError(errChan, decodeErr)
+						return
+					}
+					if decoded == "" {
 						continue
 					}
-					decoded = trim
-					firstEmitted[i] = true
-				}
-				if decoded == "." && lastChar[i] == '.' {
-					continue
-				}
-				r := []rune(decoded)
-				lastChar[i] = r[len(r)-1]
+					// stats
+					if runFirstTokenTimes[i].IsZero() {
+						runFirstTokenTimes[i] = time.Now()
+						prefill := runFirstTokenTimes[i].Sub(runStart).Seconds()
+						s.statistics.CumulativePrefillSum += prefill
+						s.statistics.CumulativePrefillCount++
+						s.statistics.AvgPrefillSeconds = s.statistics.CumulativePrefillSum / float64(s.statistics.CumulativePrefillCount)
+					}
+					s.statistics.CumulativeTokens++
+					runTokenCount++
+					// normalization: skip leading spaces for first token, avoid repeated '.' at end
+					if !firstEmitted[i] {
+						trim := strings.TrimLeft(decoded, " ")
+						if trim == "" {
+							continue
+						}
+						decoded = trim
+						firstEmitted[i] = true
+					}
+					if decoded == "." && lastChar[i] == '.' {
+						continue
+					}
+					r := []rune(decoded)
+					lastChar[i] = r[len(r)-1]
 
-				select {
-				case outputChan <- SequenceDelta{Sequence: i, Token: decoded}:
-				case <-ctx.Done():
-					return
+					select {
+					case outputChan <- SequenceDelta{Sequence: i, Token: decoded}:
+					case <-ctx.Done():
+						return
+					}
 				}
+				prevCounts[i] = newCount
 			}
 		}
 	}()
@@ -573,9 +623,9 @@ func setDefaultGenerationOptions(generationOptions *GenerationOptions) {
 	}
 }
 
-func (s *Session) Generate(ctx context.Context, messages [][]Message, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
+func (s *Session) Generate(ctx context.Context, messages [][]Message, tools []string, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
 	s.mutex.Lock()
-	sequences, tokenizerStreams, tokenizeErr := s.tokenizer.tokenizeMessages(messages)
+	sequences, tokenizerStreams, tokenizeErr := s.tokenizer.tokenizeMessages(messages, tools)
 	if tokenizeErr != nil {
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("TokenizeMessages failed: %w", tokenizeErr)
@@ -616,7 +666,7 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, generation
 
 // GenerateWithImages generates text using pre-processed named tensors (for multimodal inputs).
 // Currently only supports a single prompt.
-func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, images *Images, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
+func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, images *Images, tools []string, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
 	s.mutex.Lock()
 
 	// Current limitation: underlying C API supports a single prompt with image tags
@@ -631,7 +681,17 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to marshal input message: %w", err)
 	}
-	prompt, templateErr := s.tokenizer.ApplyChatTemplate(msgJSON, true)
+
+	rawTools := make([]json.RawMessage, len(tools))
+	for i, t := range tools {
+		rawTools[i] = json.RawMessage(t)
+	}
+	toolsJSON, err := json.Marshal(rawTools)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
+	}
+
+	prompt, templateErr := s.tokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
 	if templateErr != nil {
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to apply chat template: %w", templateErr)

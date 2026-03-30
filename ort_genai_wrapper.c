@@ -48,7 +48,9 @@ int SetGenAiApi(void* createModel,
 			void* createStringArray,
 			void* destroyStringArray,
 			void* stringArrayAddString,
-			void* processorProcessImagesAndPrompts) {
+			void* processorProcessImagesAndPrompts,
+	// Guidance/constrained-generation (optional — may be NULL on older runtimes)
+	void* generatorParamsSetGuidance) {
 	if (g_initialized) return 0; // already initialized
 	// Validate all required pointers (header comment: all must be non-null)
 	if (!createModel || !resultGetError || !destroyResult || !destroyModel ||
@@ -111,6 +113,7 @@ int SetGenAiApi(void* createModel,
 	g_api.DestroyStringArray = (PFN_OgaDestroyStringArray) destroyStringArray;
 	g_api.StringArrayAddString = (PFN_OgaStringArrayAddString) stringArrayAddString;
 	g_api.ProcessorProcessImagesAndPrompts = (PFN_OgaProcessorProcessImagesAndPrompts) processorProcessImagesAndPrompts;
+	if (generatorParamsSetGuidance) g_api.GeneratorParamsSetGuidance = (PFN_OgaGeneratorParamsSetGuidance) generatorParamsSetGuidance;
 	g_initialized = 1;
 	return 0;
 }
@@ -213,6 +216,11 @@ void DestroyOgaGeneratorParams(OgaGeneratorParams* generatorParams) {
 OgaResult* GeneratorParamsSetSearchNumber(OgaGeneratorParams* generatorParams, const char* name, double searchNumber) {
     if (!g_initialized || !g_api.GeneratorParamsSetSearchNumber) return NULL;
     return g_api.GeneratorParamsSetSearchNumber(generatorParams, name, searchNumber);
+}
+
+OgaResult* GeneratorParamsSetGuidance(OgaGeneratorParams* params, const char* type, const char* data, bool enable_ff_tokens) {
+	if (!g_initialized || !g_api.GeneratorParamsSetGuidance) return NULL;
+	return g_api.GeneratorParamsSetGuidance(params, type, data, enable_ff_tokens);
 }
 
 OgaResult* GeneratorAppendTokenSequences(OgaGenerator* generator, OgaSequences* sequences) {

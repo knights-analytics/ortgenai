@@ -46,6 +46,7 @@ typedef void (*PFN_OgaDestroyGenerator)(OgaGenerator*);
 typedef OgaResult* (*PFN_OgaCreateGeneratorParams)(const OgaModel*, OgaGeneratorParams**);
 typedef void (*PFN_OgaDestroyGeneratorParams)(OgaGeneratorParams*);
 typedef OgaResult* (*PFN_OgaGeneratorParamsSetSearchNumber)(OgaGeneratorParams*, const char*, double);
+typedef OgaResult* (*PFN_OgaGeneratorParamsSetGuidance)(OgaGeneratorParams*, const char*, const char*, bool);
 typedef OgaResult* (*PFN_OgaGeneratorAppendTokenSequences)(OgaGenerator*, const OgaSequences*);
 typedef OgaResult* (*PFN_OgaGeneratorSetInputs)(OgaGenerator*, const OgaNamedTensors*);
 typedef OgaResult* (*PFN_OgaGeneratorGenerateNextToken)(OgaGenerator*);
@@ -97,6 +98,7 @@ typedef struct GenAiApiTable {
 	PFN_OgaCreateGeneratorParams CreateGeneratorParams;
 	PFN_OgaDestroyGeneratorParams DestroyGeneratorParams;
 	PFN_OgaGeneratorParamsSetSearchNumber GeneratorParamsSetSearchNumber;
+	PFN_OgaGeneratorParamsSetGuidance GeneratorParamsSetGuidance;
 	PFN_OgaGeneratorAppendTokenSequences GeneratorAppendTokenSequences;
 	PFN_OgaGeneratorSetInputs GeneratorSetInputs;
 	PFN_OgaGeneratorGenerateNextToken GeneratorGenerateNextToken;
@@ -174,7 +176,9 @@ int SetGenAiApi(void* createModel,
 	void* createStringArray,
 	void* destroyStringArray,
 	void* stringArrayAddString,
-	void* processorProcessImagesAndPrompts);
+	void* processorProcessImagesAndPrompts,
+	// Guidance/constrained-generation (optional — may be NULL on older runtimes)
+	void* generatorParamsSetGuidance);
 
 // Returns non-zero if the API table is initialized.
 int GenAiApiIsInitialized(void);
@@ -201,6 +205,7 @@ OgaResult* TokenizerEncode(const OgaTokenizer* tokenizer, const char* str, OgaSe
 OgaResult* ApplyOgaTokenizerChatTemplate(const OgaTokenizer* tokenizer, const char* input, const char* param1, const char* param2, bool flag, const char** output);
 
 OgaResult* GeneratorParamsSetSearchNumber(OgaGeneratorParams* generatorParams, const char* name, double searchNumber);
+OgaResult* GeneratorParamsSetGuidance(OgaGeneratorParams* params, const char* type, const char* data, bool enable_ff_tokens);
 OgaResult* GeneratorAppendTokenSequences(OgaGenerator* generator, OgaSequences* sequences);
 OgaResult* GeneratorSetInputs(OgaGenerator* generator, const OgaNamedTensors* named_tensors);
 OgaResult* GeneratorGenerateNextToken(OgaGenerator* generator);

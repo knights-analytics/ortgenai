@@ -36,7 +36,7 @@ func TestGenerationGPU(t *testing.T) {
 		MaxLength: 5024,
 		BatchSize: 2,
 	}
-	generateChan, errChan, err := session.Generate(ctx, [][]Message{inputMessagesFirstGeneration, inputMessagesSecondGeneration}, options)
+	generateChan, errChan, err := session.Generate(ctx, [][]Message{inputMessagesFirstGeneration, inputMessagesSecondGeneration}, nil, options)
 	if err != nil {
 		t.Fatalf("failed to start generation: %v", err)
 	}
