@@ -280,6 +280,11 @@ func InitializeGenAiLibrary() error {
 		C.dlclose(handle)
 		return fmt.Errorf("missing OgaProcessorProcessImagesAndPrompts")
 	}
+	symGeneratorParamsSetGuidance := createSym(handle, "OgaGeneratorParamsSetGuidance")
+	if symGeneratorParamsSetGuidance == nil {
+		C.dlclose(handle)
+		return fmt.Errorf("missing OgaGeneratorParamsSetGuidance")
+	}
 
 	if rc := C.SetGenAiApi(symCreate, symErr, symDestroyRes, symDestroyModel, symCreateTokenizer, symDestroyTokenizer,
 		symCreateTokenizerStream, symDestroyTokenizerStream, symApplyChatTemplate, symDestroyString, symCreateSequence, symDestroySequence,
@@ -287,7 +292,7 @@ func InitializeGenAiLibrary() error {
 		symGeneratorParamsSetSearchNumber, symGeneratorAppendTokenSequences, symGeneratorSetInputs, symGeneratorGenerateNextToken, symGeneratorGetSequenceCount,
 		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symTokenizerGetEosTokenIDs, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig, symDestroyConfig,
 		symLoadImage, symLoadImages, symLoadImagesFromBuffers, symDestroyImages, symCreateMultiModalProcessor, symDestroyMultiModalProcessor, symProcessorProcessImages, symDestroyNamedTensors, symCreateStringArray, symDestroyStringArray, symStringArrayAddString,
-		symProcessorProcessImagesAndPrompts); rc != 0 {
+		symProcessorProcessImagesAndPrompts, symGeneratorParamsSetGuidance); rc != 0 {
 		C.dlclose(handle)
 		return fmt.Errorf("SetGenAiApi failed with code %d", int(rc))
 	}
