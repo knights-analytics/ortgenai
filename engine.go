@@ -19,15 +19,16 @@ import (
 	"unsafe"
 )
 
-var ErrEngineApiNotAvailable = errors.New("OgaEngine API not available in loaded ORT GenAI library (requires >= 0.9.1)")
+var ErrEngineAPINotAvailable = errors.New("OgaEngine API not available in loaded ORT GenAI library (requires >= 0.9.1)")
 
 // Engine provides continuous batching via the OgaEngine C API.
 // Multiple goroutines may call Submit concurrently; the engine batches
 // their requests for efficient inference.
 type Engine struct {
-	enginePtr *C.OgaEngine
-	model     *model
-	tokenizer *tokenizer
+	enginePtr  *C.OgaEngine
+	model      *model
+	tokenizer  *tokenizer
+	statistics *Statistics
 
 	mu       sync.Mutex
 	requests map[*C.OgaRequest]*engineRequest
@@ -51,6 +52,7 @@ type engineRequest struct {
 	firstToken      bool
 	eosReached      bool
 	runStart        time.Time
+	tokenCount      int
 }
 
 // CreateEngine creates a new Engine from the given model path.
@@ -59,8 +61,8 @@ func CreateEngine(modelPath string) (*Engine, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
-	if !IsEngineApiAvailable() {
-		return nil, ErrEngineApiNotAvailable
+	if !IsEngineAPIAvailable() {
+		return nil, ErrEngineAPINotAvailable
 	}
 	if modelPath == "" {
 		return nil, errors.New("modelPath is empty")
@@ -87,8 +89,8 @@ func CreateEngineWithOptions(configDirectoryPath string, providers []string, pro
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
-	if !IsEngineApiAvailable() {
-		return nil, ErrEngineApiNotAvailable
+	if !IsEngineAPIAvailable() {
+		return nil, ErrEngineAPINotAvailable
 	}
 
 	var cfg *C.OgaConfig
@@ -165,16 +167,22 @@ func newEngine(m *model) (*Engine, error) {
 	}
 
 	e := &Engine{
-		enginePtr: cEngine,
-		model:     m,
-		tokenizer: &tok,
-		requests:  make(map[*C.OgaRequest]*engineRequest),
-		submitCh:  make(chan *engineRequest, 256),
-		stopCh:    make(chan struct{}),
+		enginePtr:  cEngine,
+		model:      m,
+		tokenizer:  &tok,
+		statistics: &Statistics{},
+		requests:   make(map[*C.OgaRequest]*engineRequest),
+		submitCh:   make(chan *engineRequest, 256),
+		stopCh:     make(chan struct{}),
 	}
 	e.wg.Add(1)
 	go e.runStepLoop()
 	return e, nil
+}
+
+// GetStatistics returns generation performance metrics for the engine.
+func (e *Engine) GetStatistics() *Statistics {
+	return e.statistics
 }
 
 // Submit submits a generation request to the engine and returns channels for
@@ -183,9 +191,9 @@ func newEngine(m *model) (*Engine, error) {
 // Callers should pass a context with a deadline or timeout. If more than 256
 // goroutines submit concurrently without deadlines, Stop may block until the
 // excess callers' contexts are cancelled.
-func (e *Engine) Submit(ctx context.Context, messages []Message, opts *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
+func (e *Engine) Submit(ctx context.Context, messages []Message, tools []string, opts *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
 	// Tokenize
-	seqs, streams, err := e.tokenizer.tokenizeMessages([][]Message{messages})
+	seqs, streams, err := e.tokenizer.tokenizeMessages([][]Message{messages}, tools)
 	if err != nil {
 		return nil, nil, fmt.Errorf("tokenize failed: %w", err)
 	}
@@ -199,6 +207,7 @@ func (e *Engine) Submit(ctx context.Context, messages []Message, opts *Generatio
 	if opts != nil {
 		localOpts = *opts
 	}
+
 	if localOpts.MaxLength <= 0 {
 		localOpts.MaxLength = defaultMaxLength
 	}
@@ -216,7 +225,7 @@ func (e *Engine) Submit(ctx context.Context, messages []Message, opts *Generatio
 	// Create request
 	var cRequest *C.OgaRequest
 	res := C.CreateOgaRequest(paramsPtr, &cRequest)
-	if err := OgaResultToError(res); err != nil {
+	if err = OgaResultToError(res); err != nil {
 		C.DestroyOgaGeneratorParams(paramsPtr)
 		tokenizeCleanup(seqs, streams)
 		return nil, nil, fmt.Errorf("CreateOgaRequest failed: %w", err)
@@ -229,7 +238,7 @@ func (e *Engine) Submit(ctx context.Context, messages []Message, opts *Generatio
 
 	// Add tokens to request
 	res = C.RequestAddTokens(cRequest, seqs.sequencesPtr)
-	if err := OgaResultToError(res); err != nil {
+	if err = OgaResultToError(res); err != nil {
 		C.DestroyOgaRequest(cRequest)
 		C.DestroyOgaGeneratorParams(paramsPtr)
 		tokenizeCleanup(seqs, streams)
@@ -273,7 +282,44 @@ func (e *Engine) Submit(ctx context.Context, messages []Message, opts *Generatio
 	return outputChan, errChan, nil
 }
 
-// Stop signals the engine to stop processing and waits for the step loop to drain.
+func (e *Engine) Generate(ctx context.Context, messages [][]Message, tools []string, opts *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
+	if len(messages) == 0 {
+		return nil, nil, errors.New("no messages provided")
+	}
+
+	outputChan := make(chan SequenceDelta, 1000)
+	errChan := make(chan error, len(messages))
+	var wg sync.WaitGroup
+
+	for idx, message := range messages {
+		wg.Go(
+			func() {
+				out, errs, err := e.Submit(ctx, message, tools, opts)
+				if err != nil {
+					errChan <- fmt.Errorf("sequence %d: %w", idx, err)
+					return
+				}
+				for delta := range out {
+					delta.Sequence = idx
+					outputChan <- delta
+				}
+				for err = range errs {
+					if err != nil {
+						errChan <- fmt.Errorf("sequence %d: %w", idx, err)
+					}
+				}
+			})
+	}
+
+	go func() {
+		wg.Wait()
+		close(outputChan)
+		close(errChan)
+	}()
+
+	return outputChan, errChan, nil
+}
+
 func (e *Engine) Stop() {
 	e.stopOnce.Do(func() {
 		e.stopped.Store(true)
@@ -368,7 +414,12 @@ func (e *Engine) runStepLoop() {
 		// Run one engine step.
 		var cReady *C.OgaRequest
 		res := C.EngineStep(e.enginePtr, &cReady)
-		if err := OgaResultToError(res); err != nil {
+		if err = OgaResultToError(res); err != nil {
+			// TODO: do not rely on error/recover here, but does not work if moved to hasPendingRequests
+			if err.Error() == "Expected at least one request to be ready, but none were found." {
+				e.checkDoneRequests()
+				continue
+			}
 			// EngineStep failed — error and remove all active requests, but
 			// keep the engine loop running. The failure is request-level (e.g.
 			// model couldn't process the input) not engine-level.
@@ -467,7 +518,19 @@ func (e *Engine) processReadyRequest(cReady *C.OgaRequest) {
 			}
 			decoded = trimmed
 			req.firstToken = true
+
+			prefill := time.Since(req.runStart).Seconds()
+			e.mu.Lock()
+			e.statistics.CumulativePrefillSum += prefill
+			e.statistics.CumulativePrefillCount++
+			e.statistics.AvgPrefillSeconds = e.statistics.CumulativePrefillSum / float64(e.statistics.CumulativePrefillCount)
+			e.mu.Unlock()
 		}
+
+		e.mu.Lock()
+		e.statistics.CumulativeTokens++
+		e.mu.Unlock()
+		req.tokenCount++
 
 		select {
 		case req.outputChan <- SequenceDelta{Sequence: 0, Token: decoded}:
@@ -499,6 +562,13 @@ func (e *Engine) processReadyRequest(cReady *C.OgaRequest) {
 func (e *Engine) finishRequest(cReady *C.OgaRequest, req *engineRequest) {
 	e.mu.Lock()
 	delete(e.requests, cReady)
+	if req.tokenCount > 0 {
+		dur := time.Since(req.runStart).Seconds()
+		if dur > 0 {
+			e.statistics.CumulativeTokenDurationSeconds += dur
+			e.statistics.TokensPerSecond = float64(e.statistics.CumulativeTokens) / e.statistics.CumulativeTokenDurationSeconds
+		}
+	}
 	e.mu.Unlock()
 
 	res := C.EngineRemoveRequest(e.enginePtr, cReady)
@@ -553,13 +623,38 @@ func (e *Engine) checkCancellations() {
 		if !ok {
 			continue
 		}
+
 		// Send the caller's cancellation reason first (this is the error they care about).
 		sendGenerationError(req.errChan, req.ctx.Err())
-		// Best-effort remove; errChan is already full so any error here is silently dropped.
 		C.EngineRemoveRequest(e.enginePtr, ptr)
 		close(req.outputChan)
 		close(req.errChan)
 		req.destroy()
+	}
+}
+
+func (e *Engine) checkDoneRequests() {
+	e.mu.Lock()
+	active := make([]*C.OgaRequest, 0, len(e.requests))
+	for ptr := range e.requests {
+		active = append(active, ptr)
+	}
+	e.mu.Unlock()
+
+	for _, ptr := range active {
+		var isDone C.bool
+		res := C.RequestIsDone(ptr, &isDone)
+		if err := OgaResultToError(res); err != nil {
+			continue
+		}
+		if bool(isDone) {
+			e.mu.Lock()
+			req, ok := e.requests[ptr]
+			e.mu.Unlock()
+			if ok {
+				e.finishRequest(ptr, req)
+			}
+		}
 	}
 }
 
@@ -596,8 +691,8 @@ done:
 	e.mu.Unlock()
 
 	for ptr, req := range active {
-		C.EngineRemoveRequest(e.enginePtr, ptr)
 		sendGenerationError(req.errChan, errors.New("engine stopped"))
+		C.EngineRemoveRequest(e.enginePtr, ptr)
 		close(req.outputChan)
 		close(req.errChan)
 		req.destroy()
@@ -617,55 +712,4 @@ func (r *engineRequest) destroy() {
 		C.DestroyOgaGeneratorParams(r.paramsPtr)
 		r.paramsPtr = nil
 	}
-}
-
-// createGeneratorParams creates OgaGeneratorParams for the given model and options.
-// This is shared between Session and Engine.
-func createGeneratorParams(m *model, opts *GenerationOptions) (*C.OgaGeneratorParams, error) {
-	var cParams *C.OgaGeneratorParams
-	res := C.CreateOgaGeneratorParams(m.modelPtr, &cParams)
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("CreateOgaGeneratorParams failed: %w", err)
-	}
-	if cParams == nil {
-		return nil, errors.New("CreateOgaGeneratorParams returned nil without error")
-	}
-
-	setParam := func(name string, value float64) error {
-		cName := C.CString(name)
-		defer C.free(unsafe.Pointer(cName))
-		res := C.GeneratorParamsSetSearchNumber(cParams, cName, C.double(value))
-		return OgaResultToError(res)
-	}
-
-	if err := setParam("max_length", float64(opts.MaxLength)); err != nil {
-		C.DestroyOgaGeneratorParams(cParams)
-		return nil, fmt.Errorf("set max_length: %w", err)
-	}
-	if err := setParam("batch_size", float64(opts.BatchSize)); err != nil {
-		C.DestroyOgaGeneratorParams(cParams)
-		return nil, fmt.Errorf("set batch_size: %w", err)
-	}
-	if opts.Temperature != nil {
-		if err := setParam("temperature", *opts.Temperature); err != nil {
-			C.DestroyOgaGeneratorParams(cParams)
-			return nil, fmt.Errorf("set temperature: %w", err)
-		}
-	}
-	if opts.TopP != nil {
-		if err := setParam("top_p", *opts.TopP); err != nil {
-			C.DestroyOgaGeneratorParams(cParams)
-			return nil, fmt.Errorf("set top_p: %w", err)
-		}
-	}
-	if opts.Seed != nil {
-		// The C API OgaGeneratorParamsSetSearchNumber accepts double for all params.
-		// Seeds larger than 2^53 will lose precision; in practice seeds fit in 32 bits.
-		if err := setParam("random_seed", float64(*opts.Seed)); err != nil {
-			C.DestroyOgaGeneratorParams(cParams)
-			return nil, fmt.Errorf("set random_seed: %w", err)
-		}
-	}
-
-	return cParams, nil
 }

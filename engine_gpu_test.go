@@ -5,7 +5,10 @@ import (
 	"testing"
 )
 
-func TestEngine(t *testing.T) {
+func TestEngineGPU(t *testing.T) {
+	if os.Getenv("CI") == "true" {
+		t.Skip("skip by default in CI")
+	}
 	SetSharedLibraryPath(getLibraryPath())
 
 	if err := InitializeEnvironment(); err != nil {
@@ -17,27 +20,23 @@ func TestEngine(t *testing.T) {
 		}
 	}()
 
-	modelPath := "./models/phi3.5"
+	modelPath := "./models/phi3.5gpu" // use the gpu-optimized model
 	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
-		t.Skip("Model not found at " + modelPath)
+		t.Skip("GPU model not found at " + modelPath)
 	}
 
-	engine, err := CreateEngine(modelPath)
+	providers := []string{"cuda"}
+	providerOptions := map[string]map[string]string{}
+	engine, err := CreateEngineWithOptions(modelPath, providers, providerOptions)
 	if err != nil {
-		t.Fatalf("failed to create engine: %v", err)
+		t.Fatalf("failed to create engine with CUDA: %v", err)
 	}
 	defer engine.Destroy()
 
 	t.Run("Generation", func(t *testing.T) {
-		temperature := 0.0
-		topP := 0.9
-		seed := 42
 		options := &GenerationOptions{
-			MaxLength:   2048,
-			BatchSize:   1,
-			Temperature: &temperature,
-			TopP:        &topP,
-			Seed:        &seed,
+			MaxLength: 2048,
+			BatchSize: 1,
 		}
 		testGenericGeneration(t, engine, [][]Message{inputMessagesFirstGeneration, inputMessagesSecondGeneration}, options)
 	})
@@ -56,11 +55,11 @@ func TestEngine(t *testing.T) {
 		}
 
 		toolModelPath := "./models/qwen3-4B-int4"
-		if _, err = os.Stat(toolModelPath); os.IsNotExist(err) {
+		if _, err := os.Stat(toolModelPath); os.IsNotExist(err) {
 			t.Skip("Model not found at " + toolModelPath)
 		}
 
-		toolEngine, err := CreateEngine(toolModelPath)
+		toolEngine, err := CreateEngineWithOptions(toolModelPath, providers, providerOptions)
 		if err != nil {
 			t.Fatalf("failed to create tool engine: %v", err)
 		}

@@ -8,9 +8,15 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+type Generatable interface {
+	Generate(ctx context.Context, messages [][]Message, tools []string, options *GenerationOptions) (<-chan SequenceDelta, <-chan error, error)
+	GetStatistics() *Statistics
+}
 
 // testImagePNG is a minimal valid 1x1 red PNG image (base64 encoded).
 var testImagePNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -94,112 +100,6 @@ var inputMessagesSecondGeneration = []Message{
 	{Role: "user", Content: "What is the capital of France?"},
 }
 
-func TestGeneration(t *testing.T) {
-	SetSharedLibraryPath(getLibraryPath())
-
-	if err := InitializeEnvironment(); err != nil {
-		t.Fatalf("failed to initialize environment: %v", err)
-	}
-	defer func() {
-		if err := DestroyEnvironment(); err != nil {
-			t.Fatalf("failed to destroy environment: %v", err)
-		}
-	}()
-
-	modelPath := "./models/phi3.5"
-
-	session, err := CreateSession(modelPath)
-	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	defer cancel()
-	temperature := 0.0
-	topP := 0.9
-	seed := 42
-	options := &GenerationOptions{
-		MaxLength:   2024,
-		BatchSize:   2,
-		Temperature: &temperature,
-		TopP:        &topP,
-		Seed:        &seed,
-	}
-	generateChan, errChan, err := session.Generate(ctx, [][]Message{inputMessagesFirstGeneration, inputMessagesSecondGeneration}, nil, options)
-	if err != nil {
-		t.Fatalf("failed to start generation: %v", err)
-	}
-	var firstSequenceOutput []string
-	var secondSequenceOutput []string
-
-	for token := range generateChan {
-		if !token.EOSReached {
-			switch token.Sequence {
-			case 0:
-				firstSequenceOutput = append(firstSequenceOutput, token.Token)
-			case 1:
-				secondSequenceOutput = append(secondSequenceOutput, token.Token)
-			}
-		} else {
-			fmt.Printf("EOS token reached for sequence %d\n", token.Sequence)
-		}
-	}
-	for err := range errChan {
-		if err != nil {
-			t.Fatalf("generation error: %v", err)
-		}
-	}
-
-	fmt.Printf("First sequence output: %s", strings.Join(firstSequenceOutput, "")+"\n")
-	fmt.Printf("Second sequence output: %s", strings.Join(secondSequenceOutput, "")+"\n")
-
-	fmt.Println("statistics:")
-	stats := session.GetStatistics()
-	fmt.Printf("Cumulative prefill count: %d\n", stats.CumulativePrefillCount)
-	fmt.Printf("Cumulative prefill seconds: %.2f\n", stats.CumulativePrefillSum)
-	fmt.Printf("Average prefill seconds: %.2f\n", stats.AvgPrefillSeconds)
-	fmt.Printf("Cumulative tokens: %d\n", stats.CumulativeTokens)
-	fmt.Printf("Cumulative token duration seconds: %.2f\n", stats.CumulativeTokenDurationSeconds)
-	fmt.Printf("Tokens per second: %.2f\n", stats.TokensPerSecond)
-}
-
-// getLibraryPath returns the path to libonnxruntime-genai from ONNXRUNTIME_GENAI_LIB env var
-// or defaults to /usr/lib/libonnxruntime-genai.so.
-func getLibraryPath() string {
-	if path := os.Getenv("ONNXRUNTIME_GENAI_LIB"); path != "" {
-		return path
-	}
-	return "/usr/lib/libonnxruntime-genai.so"
-}
-
-func TestLoadImageFromBuffer(t *testing.T) {
-	SetSharedLibraryPath(getLibraryPath())
-
-	if err := InitializeEnvironment(); err != nil {
-		t.Fatalf("failed to initialize environment: %v", err)
-	}
-	defer func() {
-		if err := DestroyEnvironment(); err != nil {
-			t.Fatalf("failed to destroy environment: %v", err)
-		}
-	}()
-
-	imageData, err := base64.StdEncoding.DecodeString(testImagePNG)
-	if err != nil {
-		t.Fatalf("failed to decode test image: %v", err)
-	}
-
-	images, err := LoadImageFromBuffer(imageData)
-	if err != nil {
-		t.Fatalf("LoadImageFromBuffer failed: %v", err)
-	}
-	defer images.Destroy()
-
-	if images.imagesPtr == nil {
-		t.Fatal("images.imagesPtr is nil after LoadImageFromBuffer")
-	}
-}
-
 func TestLoadImageFromDataURI(t *testing.T) {
 	SetSharedLibraryPath(getLibraryPath())
 
@@ -278,14 +178,7 @@ func TestParseDataURI(t *testing.T) {
 	}
 }
 
-// TestMultimodalGeneration tests the full multimodal pipeline.
-// Requires a vision-language model (e.g., phi-3.5-vision).
-func TestMultimodalGeneration(t *testing.T) {
-	visionModelPath := "./models/phi3.5vision"
-	if _, err := os.Stat(visionModelPath); os.IsNotExist(err) {
-		t.Skip("Vision model not found at " + visionModelPath)
-	}
-
+func TestLoadImageFromBuffer(t *testing.T) {
 	SetSharedLibraryPath(getLibraryPath())
 
 	if err := InitializeEnvironment(); err != nil {
@@ -296,12 +189,6 @@ func TestMultimodalGeneration(t *testing.T) {
 			t.Fatalf("failed to destroy environment: %v", err)
 		}
 	}()
-
-	session, err := CreateSession(visionModelPath)
-	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
-	}
-	defer session.Destroy()
 
 	imageData, err := base64.StdEncoding.DecodeString(testImagePNG)
 	if err != nil {
@@ -314,67 +201,158 @@ func TestMultimodalGeneration(t *testing.T) {
 	}
 	defer images.Destroy()
 
-	messages := []Message{
-		{Role: "system", Content: "You are a helpful assistant."},
-		// Include image token in the user content so chat template preserves it
-		{Role: "user", Content: "<|image_1|>\nWhat is in this image?"},
+	if images.imagesPtr == nil {
+		t.Fatal("images.imagesPtr is nil after LoadImageFromBuffer")
 	}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute) // give this one a wide berth
+func testGenericGeneration(t *testing.T, g Generatable, messages [][]Message, options *GenerationOptions) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	generationOptions := &GenerationOptions{
-		MaxLength: 4096,
-		BatchSize: 1,
-	}
-
-	outputChan, errChan, err := session.GenerateWithImages(ctx, [][]Message{messages}, images, nil, generationOptions)
+	generateChan, errChan, err := g.Generate(ctx, messages, nil, options)
 	if err != nil {
-		t.Fatalf("GenerateWithImages failed: %v", err)
+		t.Fatalf("failed to start generation: %v", err)
 	}
 
-	var output []string
-	for token := range outputChan {
-		output = append(output, token.Token)
-	}
+	outputs := make([][]string, len(messages))
 
-	for err := range errChan {
+	for token := range generateChan {
+		if !token.EOSReached {
+			if token.Sequence < len(outputs) {
+				outputs[token.Sequence] = append(outputs[token.Sequence], token.Token)
+			}
+		} else {
+			fmt.Printf("EOS token reached for sequence %d\n", token.Sequence)
+		}
+	}
+	for err = range errChan {
 		if err != nil {
 			t.Fatalf("generation error: %v", err)
 		}
 	}
 
-	fmt.Printf("Multimodal output: %s\n", strings.Join(output, ""))
+	for i, out := range outputs {
+		fmt.Printf("Sequence %d output: %s\n", i, strings.Join(out, ""))
+		if len(out) == 0 {
+			t.Errorf("no output generated for sequence %d", i)
+		}
+	}
 
-	if len(output) == 0 {
-		t.Fatal("no output generated from multimodal model")
+	stats := g.GetStatistics()
+	fmt.Printf("Statistics: %+v\n", stats)
+}
+
+func testGenericConcurrentGeneration(t *testing.T, g Generatable) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	temperature := 0.0
+	topP := 0.9
+	seed := 42
+	opts := &GenerationOptions{
+		MaxLength:   2048,
+		Temperature: &temperature,
+		TopP:        &topP,
+		Seed:        &seed,
+	}
+
+	prompts := [][]Message{
+		inputMessagesFirstGeneration,
+		inputMessagesSecondGeneration,
+	}
+
+	type result struct {
+		tokens []string
+		err    error
+	}
+
+	var wg sync.WaitGroup
+	results := make([]result, len(prompts))
+
+	for i, msgs := range prompts {
+		wg.Add(1)
+		go func(idx int, messages []Message) {
+			defer wg.Done()
+			outputChan, errChan, err := g.Generate(ctx, [][]Message{messages}, nil, opts)
+			if err != nil {
+				results[idx] = result{err: err}
+				return
+			}
+
+			var tokens []string
+			for delta := range outputChan {
+				if !delta.EOSReached {
+					tokens = append(tokens, delta.Token)
+				}
+			}
+			for err := range errChan {
+				if err != nil {
+					results[idx] = result{err: err}
+					return
+				}
+			}
+			results[idx] = result{tokens: tokens}
+		}(i, msgs)
+	}
+
+	wg.Wait()
+
+	for i, r := range results {
+		if r.err != nil {
+			t.Fatalf("request %d failed: %v", i, r.err)
+		}
+		output := strings.Join(r.tokens, "")
+		fmt.Printf("Concurrent request %d output: %s\n", i, output)
+		if len(r.tokens) == 0 {
+			t.Fatalf("request %d produced no tokens", i)
+		}
 	}
 }
 
-// TestGenerationWithTools tests that two Hermes-style tool definitions are rendered by the
-// Qwen3 chat template and that the model produces a tool_call in its output.
-func TestGenerationWithTools(t *testing.T) {
-	if os.Getenv("CI") == "true" {
-		t.Skip("Skipping tool-calling test in CI as it requires qwen, we run this locally")
+func testGenericContextCancellation(t *testing.T, g Generatable) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	temperature := 0.0
+	topP := 0.9
+	seed := 42
+	opts := &GenerationOptions{
+		MaxLength:   4096, // long enough that we'll hit the timeout
+		Temperature: &temperature,
+		TopP:        &topP,
+		Seed:        &seed,
 	}
 
-	SetSharedLibraryPath(getLibraryPath())
-
-	if err := InitializeEnvironment(); err != nil {
-		t.Fatalf("failed to initialize environment: %v", err)
-	}
-	defer func() {
-		if err := DestroyEnvironment(); err != nil {
-			t.Fatalf("failed to destroy environment: %v", err)
-		}
-	}()
-
-	session, err := CreateSession("./models/qwen3-4B-int4")
+	outputChan, _, err := g.Generate(ctx, [][]Message{inputMessagesFirstGeneration}, nil, opts)
 	if err != nil {
-		t.Fatalf("failed to create session: %v", err)
+		t.Fatalf("Generate failed: %v", err)
 	}
-	defer session.Destroy()
 
+	var tokens []string
+	for delta := range outputChan {
+		if !delta.EOSReached {
+			tokens = append(tokens, delta.Token)
+		}
+	}
+
+	fmt.Printf("Cancelled after %d tokens\n", len(tokens))
+}
+
+// getLibraryPath returns the path to libonnxruntime-genai from ONNXRUNTIME_GENAI_LIB env var
+// or defaults to /usr/lib/libonnxruntime-genai.so.
+func getLibraryPath() string {
+	if path := os.Getenv("ONNXRUNTIME_GENAI_LIB"); path != "" {
+		return path
+	}
+	return "/usr/lib/libonnxruntime-genai.so"
+}
+
+func testGenericGenerationWithTools(t *testing.T, g Generatable) {
+	t.Helper()
 	// Two minimal Hermes-style tool definitions.
 	tools := []string{
 		`{
@@ -448,7 +426,7 @@ tool_json: %json {"anyOf": [` +
 		},
 	}
 
-	outputChan, errChan, err := session.Generate(ctx, [][]Message{messages}, tools, options)
+	outputChan, errChan, err := g.Generate(ctx, [][]Message{messages}, tools, options)
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}

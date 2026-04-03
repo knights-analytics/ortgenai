@@ -17,7 +17,7 @@ import (
 var genAiLibraryHandle unsafe.Pointer
 
 func platformCleanup() error {
-	engineApiAvailable = false
+	engineAPIAvailable = false
 	if genAiLibraryHandle == nil {
 		return nil
 	}
@@ -300,21 +300,21 @@ func InitializeGenAiLibrary() error {
 	}
 
 	// Engine/Request API (optional — available in ORT GenAI >= 0.9.1)
-	initEngineApi(handle)
+	initEngineAPI(handle)
 
 	genAiLibraryHandle = handle
 	return nil
 }
 
-// engineApiAvailable is true if the OgaEngine continuous batching symbols were found.
-var engineApiAvailable bool
+// engineAPIAvailable is true if the OgaEngine continuous batching symbols were found.
+var engineAPIAvailable bool
 
-// IsEngineApiAvailable reports whether the loaded ORT GenAI library supports the Engine API.
-func IsEngineApiAvailable() bool {
-	return engineApiAvailable
+// IsEngineAPIAvailable reports whether the loaded ORT GenAI library supports the Engine API.
+func IsEngineAPIAvailable() bool {
+	return engineAPIAvailable
 }
 
-func initEngineApi(handle unsafe.Pointer) {
+func initEngineAPI(handle unsafe.Pointer) {
 	symCreateEngine := createSym(handle, "OgaCreateEngine")
 	symDestroyEngine := createSym(handle, "OgaDestroyEngine")
 	symEngineStep := createSym(handle, "OgaEngineStep")
@@ -337,7 +337,6 @@ func initEngineApi(handle unsafe.Pointer) {
 		symRequestAddTokens == nil || symRequestSetOpaqueData == nil ||
 		symRequestGetOpaqueData == nil || symRequestHasUnseenTokens == nil ||
 		symRequestGetUnseenToken == nil || symRequestIsDone == nil {
-		// Engine API not available in this library version — not an error.
 		return
 	}
 
@@ -352,5 +351,5 @@ func initEngineApi(handle unsafe.Pointer) {
 	if rc != 0 {
 		return
 	}
-	engineApiAvailable = true
+	engineAPIAvailable = true
 }

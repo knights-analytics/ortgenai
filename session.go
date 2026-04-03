@@ -358,67 +358,20 @@ func tokenizeCleanup(sequencesInstance *sequences, tokenizerStreams []*tokenizer
 }
 
 func (s *Session) createGenerator(generationOptions *GenerationOptions) (*generator, error) {
-	var cGeneratorParams *C.OgaGeneratorParams
-	res := C.CreateOgaGeneratorParams(s.model.modelPtr, &cGeneratorParams)
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("CreateOgaGeneratorParams failed: %w", err)
-	}
-	if cGeneratorParams == nil {
-		return nil, errors.New("CreateOgaGeneratorParams returned nil generator params without error")
-	}
-	maxLengthName := C.CString("max_length")
-	defer C.free(unsafe.Pointer(maxLengthName))
-	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, maxLengthName, C.double(generationOptions.MaxLength))
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber failed: %w", err)
-	}
-
-	batchSizeName := C.CString("batch_size")
-	defer C.free(unsafe.Pointer(batchSizeName))
-	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, batchSizeName, C.double(generationOptions.BatchSize))
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(batch_size) failed: %w", err)
-	}
-
-	temperatureName := C.CString("temperature")
-	defer C.free(unsafe.Pointer(temperatureName))
-	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, temperatureName, C.double(*generationOptions.Temperature))
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(temperature) failed: %w", err)
-	}
-
-	topPName := C.CString("top_p")
-	defer C.free(unsafe.Pointer(topPName))
-	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, topPName, C.double(*generationOptions.TopP))
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(top_p) failed: %w", err)
-	}
-
-	seedName := C.CString("random_seed")
-	defer C.free(unsafe.Pointer(seedName))
-	res = C.GeneratorParamsSetSearchNumber(cGeneratorParams, seedName, C.double(*generationOptions.Seed))
-	if err := OgaResultToError(res); err != nil {
-		return nil, fmt.Errorf("GeneratorParamsSetSearchNumber(random_seed) failed: %w", err)
-	}
-
-	if generationOptions.Guidance != nil {
-		cGuidanceType := C.CString(string(generationOptions.Guidance.Type))
-		defer C.free(unsafe.Pointer(cGuidanceType))
-		cGuidanceData := C.CString(generationOptions.Guidance.Data)
-		defer C.free(unsafe.Pointer(cGuidanceData))
-		res = C.GeneratorParamsSetGuidance(cGeneratorParams, cGuidanceType, cGuidanceData, C.bool(generationOptions.Guidance.EnableFFTokens))
-		if err := OgaResultToError(res); err != nil {
-			return nil, fmt.Errorf("GeneratorParamsSetGuidance failed: %w", err)
-		}
+	cGeneratorParams, err := createGeneratorParams(s.model, generationOptions)
+	if err != nil {
+		return nil, err
 	}
 
 	// create a generator with those params
 	var cGenerator *C.OgaGenerator
-	res = C.CreateOgaGenerator(s.model.modelPtr, cGeneratorParams, &cGenerator)
+	res := C.CreateOgaGenerator(s.model.modelPtr, cGeneratorParams, &cGenerator)
 	if err := OgaResultToError(res); err != nil {
+		C.DestroyOgaGeneratorParams(cGeneratorParams)
 		return nil, fmt.Errorf("CreateOgaGenerator failed: %w", err)
 	}
 	if cGenerator == nil {
+		C.DestroyOgaGeneratorParams(cGeneratorParams)
 		return nil, errors.New("CreateOgaGenerator returned nil generator without error")
 	}
 
