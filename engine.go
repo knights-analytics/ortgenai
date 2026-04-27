@@ -26,7 +26,7 @@ var ErrEngineAPINotAvailable = errors.New("OgaEngine API not available in loaded
 // their requests for efficient inference.
 type Engine struct {
 	enginePtr  *C.OgaEngine
-	model      *model
+	model      *Model
 	tokenizer  *tokenizer
 	statistics *Statistics
 
@@ -80,7 +80,7 @@ func CreateEngine(modelPath string) (*Engine, error) {
 		return nil, errors.New("CreateOgaModel returned nil model without error")
 	}
 
-	m := &model{modelPtr: cModel}
+	m := &Model{modelPtr: cModel}
 	return newEngine(m)
 }
 
@@ -142,11 +142,11 @@ func CreateEngineWithOptions(configDirectoryPath string, providers []string, pro
 		return nil, errors.New("CreateOgaModelFromConfig returned nil without error")
 	}
 
-	m := &model{modelPtr: cModel}
+	m := &Model{modelPtr: cModel}
 	return newEngine(m)
 }
 
-func newEngine(m *model) (*Engine, error) {
+func newEngine(m *Model) (*Engine, error) {
 	tok, err := newTokenizerFromModel(*m)
 	if err != nil {
 		m.destroy()

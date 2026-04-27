@@ -85,6 +85,47 @@ func TestSession(t *testing.T) {
 		defer toolSession.Destroy()
 		testGenericGenerationWithTools(t, toolSession)
 	})
+
+	t.Run("LoRAAdapter", func(t *testing.T) {
+		modelPath := "./models/phi3.5"
+		if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+			t.Skip("Model not found at " + modelPath)
+		}
+
+		session, err := CreateSession(modelPath)
+		if err != nil {
+			t.Fatalf("failed to create session: %v", err)
+		}
+		defer session.Destroy()
+
+		adapters, err := session.model.CreateAdapters()
+		if err != nil {
+			t.Fatalf("failed to create adapters: %v", err)
+		}
+		defer adapters.Destroy()
+
+		// Attempt to load a non-existent adapter
+		err = adapters.LoadAdapter("nonexistent.adapter", "my-adapter")
+		if err == nil {
+			t.Fatal("expected error loading non-existent adapter, got nil")
+		}
+
+		// Try generating with this adapter
+		options := &GenerationOptions{
+			MaxLength:     10,
+			BatchSize:     1,
+			Adapters:      adapters,
+			ActiveAdapter: "my-adapter",
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+		defer cancel()
+
+		_, _, err = session.Generate(ctx, [][]Message{{{Role: "user", Content: "Hello"}}}, nil, options)
+		if err == nil {
+			t.Error("expected error during generation with non-existent adapter, got nil")
+		}
+	})
 }
 
 func testGenericMultimodal(t *testing.T, s *Session) {

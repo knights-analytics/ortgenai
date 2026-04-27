@@ -282,19 +282,49 @@ func InitializeGenAiLibrary() error {
 		C.dlclose(handle)
 		return fmt.Errorf("missing OgaProcessorProcessImagesAndPrompts")
 	}
-	symGeneratorParamsSetGuidance := createSym(handle, "OgaGeneratorParamsSetGuidance")
-	if symGeneratorParamsSetGuidance == nil {
-		C.dlclose(handle)
-		return fmt.Errorf("missing OgaGeneratorParamsSetGuidance")
+
+	symConfigAddModelData := createSym(handle, "OgaConfigAddModelData")
+	symConfigRemoveModelData := createSym(handle, "OgaConfigRemoveModelData")
+	symConfigOverlay := createSym(handle, "OgaConfigOverlay")
+	symConfigSetDecoderProviderOptionsHardwareDeviceType := createSym(handle, "OgaConfigSetDecoderProviderOptionsHardwareDeviceType")
+	symConfigSetDecoderProviderOptionsHardwareDeviceId := createSym(handle, "OgaConfigSetDecoderProviderOptionsHardwareDeviceId")
+	symConfigSetDecoderProviderOptionsHardwareVendorId := createSym(handle, "OgaConfigSetDecoderProviderOptionsHardwareVendorId")
+	symConfigClearDecoderProviderOptionsHardwareDeviceType := createSym(handle, "OgaConfigClearDecoderProviderOptionsHardwareDeviceType")
+	symConfigClearDecoderProviderOptionsHardwareDeviceId := createSym(handle, "OgaConfigClearDecoderProviderOptionsHardwareDeviceId")
+	symConfigClearDecoderProviderOptionsHardwareVendorId := createSym(handle, "OgaConfigClearDecoderProviderOptionsHardwareVendorId")
+	symIsSessionTerminated := createSym(handle, "OgaGeneratorIsSessionTerminated")
+	symGeneratorRewindTo := createSym(handle, "OgaGenerator_RewindTo")
+	symGeneratorSetModelInput := createSym(handle, "OgaGenerator_SetModelInput")
+	symGeneratorSetLogits := createSym(handle, "OgaGenerator_SetLogits")
+	symTokenizerGetEosTokenIds := createSym(handle, "OgaTokenizerGetEosTokenIds")
+
+	symCreateAdapters := createSym(handle, "OgaCreateAdapters")
+	symDestroyAdapters := createSym(handle, "OgaDestroyAdapters")
+	symLoadAdapter := createSym(handle, "OgaLoadAdapter")
+	symUnloadAdapter := createSym(handle, "OgaUnloadAdapter")
+	symSetActiveAdapter := createSym(handle, "OgaSetActiveAdapter")
+	if symCreateAdapters != nil && symDestroyAdapters != nil && symLoadAdapter != nil && symUnloadAdapter != nil && symSetActiveAdapter != nil {
+		if rc := C.SetGenAiAdaptersApi(symCreateAdapters, symDestroyAdapters, symLoadAdapter, symUnloadAdapter, symSetActiveAdapter); rc != 0 {
+			return fmt.Errorf("SetGenAiAdaptersApi failed with code %d", int(rc))
+		}
 	}
+	symGeneratorParamsSetGuidance := createSym(handle, "OgaGeneratorParamsSetGuidance")
+	// guidance is optional
 
 	if rc := C.SetGenAiApi(symCreate, symErr, symDestroyRes, symDestroyModel, symCreateTokenizer, symDestroyTokenizer,
 		symCreateTokenizerStream, symDestroyTokenizerStream, symApplyChatTemplate, symDestroyString, symCreateSequence, symDestroySequence,
 		symTokenizerEncode, symCreateGenerator, symDestroyGenerator, symCreateGeneratorParams, symDestroyGeneratorParams,
 		symGeneratorParamsSetSearchNumber, symGeneratorAppendTokenSequences, symGeneratorSetInputs, symGeneratorGenerateNextToken, symGeneratorGetSequenceCount,
-		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symTokenizerGetEosTokenIDs, symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption, symCreateModelFromConfig, symDestroyConfig,
+		symGeneratorGetSequenceData, symTokenizerStreamDecode, symIsDone, symTokenizerGetEosTokenIds,
+		symCreateConfig, symConfigClearProviders, symConfigAppendProvider, symConfigSetProviderOption,
+		symConfigAddModelData, symConfigRemoveModelData, symConfigOverlay,
+		symConfigSetDecoderProviderOptionsHardwareDeviceType, symConfigSetDecoderProviderOptionsHardwareDeviceId, symConfigSetDecoderProviderOptionsHardwareVendorId,
+		symConfigClearDecoderProviderOptionsHardwareDeviceType, symConfigClearDecoderProviderOptionsHardwareDeviceId, symConfigClearDecoderProviderOptionsHardwareVendorId,
+		symCreateModelFromConfig, symDestroyConfig,
 		symLoadImage, symLoadImages, symLoadImagesFromBuffers, symDestroyImages, symCreateMultiModalProcessor, symDestroyMultiModalProcessor, symProcessorProcessImages, symDestroyNamedTensors, symCreateStringArray, symDestroyStringArray, symStringArrayAddString,
-		symProcessorProcessImagesAndPrompts, symGeneratorParamsSetGuidance); rc != 0 {
+		symProcessorProcessImagesAndPrompts,
+		symIsSessionTerminated, symGeneratorRewindTo, symGeneratorSetModelInput, symGeneratorSetLogits,
+		symGeneratorParamsSetGuidance); rc != 0 {
 		C.dlclose(handle)
 		return fmt.Errorf("SetGenAiApi failed with code %d", int(rc))
 	}

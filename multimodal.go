@@ -277,8 +277,8 @@ func LoadImagesFromBuffers(imageBuffers [][]byte) (*Images, error) {
 	return &Images{imagesPtr: cImages}, nil
 }
 
-// CreateMultiModalProcessor creates a multimodal processor from a model.
-func createMultiModalProcessor(model *model) (*multiModalProcessor, error) {
+// CreateMultiModalProcessor creates a multimodal processor from a Model.
+func createMultiModalProcessor(model *Model) (*multiModalProcessor, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
 	}
@@ -300,7 +300,7 @@ func createMultiModalProcessor(model *model) (*multiModalProcessor, error) {
 }
 
 // ProcessImages processes images with a prompt and returns named tensors.
-func (p *multiModalProcessor) ProcessImages(prompt string, images *Images) (*NamedTensors, error) {
+func (p *multiModalProcessor) ProcessImages(prompts []string, images *Images) (*NamedTensors, error) {
 	if p.processorPtr == nil {
 		return nil, errors.New("processor is not initialized")
 	}
@@ -308,37 +308,32 @@ func (p *multiModalProcessor) ProcessImages(prompt string, images *Images) (*Nam
 		return nil, errors.New("images is nil")
 	}
 
-	// TODO: support multiple prompts, somehow this gives an error on image tag mismatch
-	// // Create OgaStringArray for prompts
-	// var cStringArray *C.OgaStringArray
-	// res := C.CreateOgaStringArray(&cStringArray)
-	// if err := OgaResultToError(res); err != nil {
-	// 	return nil, fmt.Errorf("CreateOgaStringArray failed: %w", err)
-	// }
-	// defer C.DestroyOgaStringArray(cStringArray)
+	var cStringArray *C.OgaStringArray
+	res := C.CreateOgaStringArray(&cStringArray)
+	if err := OgaResultToError(res); err != nil {
+		return nil, fmt.Errorf("CreateOgaStringArray failed: %w", err)
+	}
+	defer C.DestroyOgaStringArray(cStringArray)
 
-	// for _, prompt := range prompts {
-	// 	cPrompt := C.CString(prompt)
-	// 	res = C.AddStringToOgaStringArray(cStringArray, cPrompt)
-	// 	C.free(unsafe.Pointer(cPrompt))
-	// 	if err := OgaResultToError(res); err != nil {
-	// 		return nil, fmt.Errorf("AddStringToOgaStringArray failed: %w", err)
-	// 	}
-	// }
-	// res = C.ProcessOgaImagesAndPrompts(p.processorPtr, cStringArray, images.imagesPtr, &cTensors)
+	for _, p := range prompts {
+		cPrompt := C.CString(p)
+		res = C.AddStringToOgaStringArray(cStringArray, cPrompt)
+		C.free(unsafe.Pointer(cPrompt))
+		if err := OgaResultToError(res); err != nil {
+			return nil, fmt.Errorf("AddStringToOgaStringArray failed: %w", err)
+		}
+	}
 
 	var cTensors *C.OgaNamedTensors
-	promptC := C.CString(prompt)
-	defer C.free(unsafe.Pointer(promptC))
-	res := C.ProcessOgaImages(p.processorPtr, promptC, images.imagesPtr, &cTensors)
+	res = C.ProcessOgaImagesAndPrompts(p.processorPtr, cStringArray, images.imagesPtr, &cTensors)
 	if err := OgaResultToError(res); err != nil {
 		if cTensors != nil {
 			C.DestroyOgaNamedTensors(cTensors)
 		}
-		return nil, fmt.Errorf("ProcessImages failed: %w", err)
+		return nil, fmt.Errorf("ProcessImagesAndPrompts failed: %w", err)
 	}
 	if cTensors == nil {
-		return nil, errors.New("ProcessImages returned nil without error")
+		return nil, errors.New("ProcessImagesAndPrompts returned nil without error")
 	}
 	return &NamedTensors{tensorsPtr: cTensors}, nil
 }

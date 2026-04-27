@@ -12,9 +12,9 @@ import (
 	"unsafe"
 )
 
-// createGeneratorParams creates OgaGeneratorParams for the given model and options.
+// createGeneratorParams creates OgaGeneratorParams for the given Model and options.
 // This is shared between Session and Engine.
-func createGeneratorParams(m *model, opts *GenerationOptions) (*C.OgaGeneratorParams, error) {
+func createGeneratorParams(m *Model, opts *GenerationOptions) (*C.OgaGeneratorParams, error) {
 	var cParams *C.OgaGeneratorParams
 	res := C.CreateOgaGeneratorParams(m.modelPtr, &cParams)
 	if err := OgaResultToError(res); err != nil {

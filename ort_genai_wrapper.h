@@ -25,6 +25,7 @@ typedef struct OgaConfig OgaConfig;
 typedef struct OgaImages OgaImages;
 typedef struct OgaMultiModalProcessor OgaMultiModalProcessor;
 typedef struct OgaNamedTensors OgaNamedTensors;
+typedef struct OgaTensor OgaTensor;
 typedef struct OgaStringArray OgaStringArray;
 typedef struct OgaEngine OgaEngine;
 typedef struct OgaRequest OgaRequest;
@@ -56,6 +57,10 @@ typedef size_t (*PFN_OgaGeneratorGetSequenceCount)(const OgaGenerator*, size_t);
 typedef const int32_t* (*PFN_OgaGeneratorGetSequenceData)(const OgaGenerator*, size_t);
 typedef OgaResult* (*PFN_OgaTokenizerStreamDecode)(OgaTokenizerStream*, int32_t, const char**);
 typedef bool (*PFN_OgaGeneratorIsDone)(const OgaGenerator*);
+typedef bool (*PFN_OgaGeneratorIsSessionTerminated)(const OgaGenerator*);
+typedef OgaResult* (*PFN_OgaGenerator_RewindTo)(OgaGenerator*, size_t);
+typedef OgaResult* (*PFN_OgaGenerator_SetModelInput)(OgaGenerator*, const char*, OgaTensor*);
+typedef OgaResult* (*PFN_OgaGenerator_SetLogits)(OgaGenerator*, OgaTensor*);
 typedef OgaResult* (*PFN_OgaTokenizerGetEosTokenIds)(const OgaTokenizer*, const int32_t** , size_t*);
 
 // Config-related API
@@ -63,6 +68,15 @@ typedef OgaResult* (*PFN_OgaCreateConfig)(const char*, OgaConfig**);
 typedef OgaResult* (*PFN_OgaConfigClearProviders)(OgaConfig*);
 typedef OgaResult* (*PFN_OgaConfigAppendProvider)(OgaConfig*, const char*);
 typedef OgaResult* (*PFN_OgaConfigSetProviderOption)(OgaConfig*, const char*, const char*, const char*);
+typedef OgaResult* (*PFN_OgaConfigAddModelData)(OgaConfig*, const char*, const void*, size_t);
+typedef OgaResult* (*PFN_OgaConfigRemoveModelData)(OgaConfig*, const char*);
+typedef OgaResult* (*PFN_OgaConfigOverlay)(OgaConfig*, const char*);
+typedef OgaResult* (*PFN_OgaConfigSetDecoderProviderOptionsHardwareDeviceType)(OgaConfig*, const char*, const char*);
+typedef OgaResult* (*PFN_OgaConfigSetDecoderProviderOptionsHardwareDeviceId)(OgaConfig*, const char*, uint32_t);
+typedef OgaResult* (*PFN_OgaConfigSetDecoderProviderOptionsHardwareVendorId)(OgaConfig*, const char*, uint32_t);
+typedef OgaResult* (*PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceType)(OgaConfig*, const char*);
+typedef OgaResult* (*PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceId)(OgaConfig*, const char*);
+typedef OgaResult* (*PFN_OgaConfigClearDecoderProviderOptionsHardwareVendorId)(OgaConfig*, const char*);
 typedef OgaResult* (*PFN_OgaCreateModelFromConfig)(const OgaConfig*, OgaModel**);
 typedef void (*PFN_OgaDestroyConfig)(OgaConfig*);
 
@@ -79,6 +93,16 @@ typedef OgaResult* (*PFN_OgaCreateStringArray)(OgaStringArray**);
 typedef void (*PFN_OgaDestroyStringArray)(OgaStringArray*);
 typedef OgaResult* (*PFN_OgaStringArrayAddString)(OgaStringArray*, const char*);
 typedef OgaResult* (*PFN_OgaProcessorProcessImagesAndPrompts)(const OgaMultiModalProcessor*, const OgaStringArray*, const OgaImages*, OgaNamedTensors**);
+typedef OgaResult* (*PFN_OgaNamedTensorsGet)(OgaNamedTensors*, const char*, OgaTensor**);
+typedef OgaResult* (*PFN_OgaNamedTensorsSet)(OgaNamedTensors*, const char*, OgaTensor*);
+typedef OgaResult* (*PFN_OgaNamedTensorsDelete)(OgaNamedTensors*, const char*);
+
+// Adapters
+typedef OgaResult* (*PFN_OgaCreateAdapters)(const OgaModel*, OgaAdapters**);
+typedef void (*PFN_OgaDestroyAdapters)(OgaAdapters*);
+typedef OgaResult* (*PFN_OgaLoadAdapter)(OgaAdapters*, const char*, const char*);
+typedef OgaResult* (*PFN_OgaUnloadAdapter)(OgaAdapters*, const char*);
+typedef OgaResult* (*PFN_OgaSetActiveAdapter)(OgaGenerator*, OgaAdapters*, const char*);
 
 // Engine/Request API (continuous batching)
 typedef OgaResult* (*PFN_OgaCreateEngine)(OgaModel*, OgaEngine**);
@@ -124,12 +148,25 @@ typedef struct GenAiApiTable {
 	PFN_OgaGeneratorGetSequenceData GeneratorGetSequenceData;
 	PFN_OgaTokenizerStreamDecode TokenizerStreamDecode;
 	PFN_OgaGeneratorIsDone IsDone;
+	PFN_OgaGeneratorIsSessionTerminated IsSessionTerminated;
+	PFN_OgaGenerator_RewindTo GeneratorRewindTo;
+	PFN_OgaGenerator_SetModelInput GeneratorSetModelInput;
+	PFN_OgaGenerator_SetLogits GeneratorSetLogits;
     PFN_OgaTokenizerGetEosTokenIds TokenizerGetEosTokenIds;
 	// Config
 	PFN_OgaCreateConfig CreateConfig;
 	PFN_OgaConfigClearProviders ConfigClearProviders;
 	PFN_OgaConfigAppendProvider ConfigAppendProvider;
 	PFN_OgaConfigSetProviderOption ConfigSetProviderOption;
+	PFN_OgaConfigAddModelData ConfigAddModelData;
+	PFN_OgaConfigRemoveModelData ConfigRemoveModelData;
+	PFN_OgaConfigOverlay ConfigOverlay;
+	PFN_OgaConfigSetDecoderProviderOptionsHardwareDeviceType ConfigSetDecoderProviderOptionsHardwareDeviceType;
+	PFN_OgaConfigSetDecoderProviderOptionsHardwareDeviceId ConfigSetDecoderProviderOptionsHardwareDeviceId;
+	PFN_OgaConfigSetDecoderProviderOptionsHardwareVendorId ConfigSetDecoderProviderOptionsHardwareVendorId;
+	PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceType ConfigClearDecoderProviderOptionsHardwareDeviceType;
+	PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceId ConfigClearDecoderProviderOptionsHardwareDeviceId;
+	PFN_OgaConfigClearDecoderProviderOptionsHardwareVendorId ConfigClearDecoderProviderOptionsHardwareVendorId;
 	PFN_OgaCreateModelFromConfig CreateModelFromConfig;
 	PFN_OgaDestroyConfig DestroyConfig;
 	// Multimodal
@@ -145,6 +182,12 @@ typedef struct GenAiApiTable {
 	PFN_OgaDestroyStringArray DestroyStringArray;
 	PFN_OgaStringArrayAddString StringArrayAddString;
 	PFN_OgaProcessorProcessImagesAndPrompts ProcessorProcessImagesAndPrompts;
+	// Adapters
+	PFN_OgaCreateAdapters CreateAdapters;
+	PFN_OgaDestroyAdapters DestroyAdapters;
+	PFN_OgaLoadAdapter LoadAdapter;
+	PFN_OgaUnloadAdapter UnloadAdapter;
+	PFN_OgaSetActiveAdapter SetActiveAdapter;
 	// Engine (continuous batching)
 	PFN_OgaCreateEngine CreateEngine;
 	PFN_OgaDestroyEngine DestroyEngine;
@@ -189,12 +232,25 @@ int SetGenAiApi(void* createModel,
 	void* generatorGetSequenceData,
 	void* tokenizerStreamDecode,
 	void* isDone,
+	void* isSessionTerminated,
+	void* generatorRewindTo,
+	void* generatorSetModelInput,
+	void* generatorSetLogits,
     void* tokenizerGetEosTokenIds,
 	// Config
 	void* createConfig,
 	void* configClearProviders,
 	void* configAppendProvider,
 	void* configSetProviderOption,
+	void* configAddModelData,
+	void* configRemoveModelData,
+	void* configOverlay,
+	void* configSetDecoderProviderOptionsHardwareDeviceType,
+	void* configSetDecoderProviderOptionsHardwareDeviceId,
+	void* configSetDecoderProviderOptionsHardwareVendorId,
+	void* configClearDecoderProviderOptionsHardwareDeviceType,
+	void* configClearDecoderProviderOptionsHardwareDeviceId,
+	void* configClearDecoderProviderOptionsHardwareVendorId,
 	void* createModelFromConfig,
 	void* destroyConfig,
 	// Multimodal
@@ -297,6 +353,16 @@ OgaResult* RequestGetOpaqueData(OgaRequest* request, void** opaque_data);
 OgaResult* RequestHasUnseenTokens(const OgaRequest* request, bool* out);
 OgaResult* RequestGetUnseenToken(OgaRequest* request, int32_t* out);
 OgaResult* RequestIsDone(const OgaRequest* request, bool* out);
+
+// Adapters thin wrappers
+OgaResult* CreateOgaAdapters(const OgaModel* model, OgaAdapters** out);
+void DestroyOgaAdapters(OgaAdapters* adapters);
+OgaResult* LoadOgaAdapter(OgaAdapters* adapters, const char* adapter_file_path, const char* adapter_name);
+OgaResult* UnloadOgaAdapter(OgaAdapters* adapters, const char* adapter_name);
+OgaResult* SetActiveOgaAdapter(OgaGenerator* generator, OgaAdapters* adapters, const char* adapter_name);
+
+int SetGenAiAdaptersApi(void* createAdapters, void* destroyAdapters, void* loadAdapter, void* unloadAdapter, void* setActiveAdapter);
+int GenAiAdaptersApiIsInitialized(void);
 
 #ifdef __cplusplus
 } // extern "C"

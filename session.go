@@ -76,12 +76,14 @@ type Guidance struct {
 }
 
 type GenerationOptions struct {
-	MaxLength   int
-	BatchSize   int
-	Temperature *float64
-	TopP        *float64
-	Seed        *int
-	Guidance    *Guidance
+	MaxLength     int
+	BatchSize     int
+	Temperature   *float64
+	TopP          *float64
+	Seed          *int
+	Guidance      *Guidance
+	Adapters      *Adapters
+	ActiveAdapter string
 }
 
 var defaultMaxLength = 2024
@@ -135,7 +137,7 @@ type tokenizer struct {
 	EOSTokenIDs  []int
 }
 
-func newTokenizerFromModel(model model) (tokenizer, error) {
+func newTokenizerFromModel(model Model) (tokenizer, error) {
 	var cTokenizer *C.OgaTokenizer
 	res := C.CreateOgaTokenizer(model.modelPtr, &cTokenizer)
 	if err := OgaResultToError(res); err != nil {
@@ -211,19 +213,71 @@ func (s *sequences) destroy() {
 	}
 }
 
-type model struct {
+type Model struct {
 	modelPtr *C.OgaModel
 }
 
-func (m *model) destroy() {
+func (m *Model) destroy() {
 	if m.modelPtr != nil {
 		C.DestroyOgaModel(m.modelPtr)
 		m.modelPtr = nil
 	}
 }
 
+type Adapters struct {
+	adapters *C.OgaAdapters
+}
+
+func (a *Adapters) Destroy() {
+	C.DestroyOgaAdapters(a.adapters)
+}
+
+func (a *Adapters) LoadAdapter(adapterPath, adapterName string) error {
+	cPath := C.CString(adapterPath)
+	defer C.free(unsafe.Pointer(cPath))
+	cName := C.CString(adapterName)
+	defer C.free(unsafe.Pointer(cName))
+
+	result := C.LoadOgaAdapter(a.adapters, cPath, cName)
+	if err := OgaResultToError(result); err != nil {
+		return fmt.Errorf("LoadOgaAdapter failed: %w", err)
+	}
+	return nil
+}
+
+func (a *Adapters) UnloadAdapter(adapterName string) error {
+	cName := C.CString(adapterName)
+	defer C.free(unsafe.Pointer(cName))
+
+	result := C.UnloadOgaAdapter(a.adapters, cName)
+	if err := OgaResultToError(result); err != nil {
+		return fmt.Errorf("UnloadOgaAdapter failed: %w", err)
+	}
+	return nil
+}
+
+func (a *Adapters) SetActiveAdapter(g *generator, adapterName string) error {
+	cName := C.CString(adapterName)
+	defer C.free(unsafe.Pointer(cName))
+
+	result := C.SetActiveOgaAdapter(g.generatorPtr, a.adapters, cName)
+	if err := OgaResultToError(result); err != nil {
+		return fmt.Errorf("SetActiveOgaAdapter failed: %w", err)
+	}
+	return nil
+}
+
+func (m *Model) CreateAdapters() (*Adapters, error) {
+	var adapters *C.OgaAdapters
+	result := C.CreateOgaAdapters(m.modelPtr, &adapters)
+	if err := OgaResultToError(result); err != nil {
+		return nil, fmt.Errorf("CreateAdapters failed: %w", err)
+	}
+	return &Adapters{adapters: adapters}, nil
+}
+
 type Session struct {
-	model      *model
+	model      *Model
 	processor  *multiModalProcessor
 	tokenizer  *tokenizer
 	statistics *Statistics
@@ -260,6 +314,18 @@ func (s *Session) GetStatistics() *Statistics {
 
 func (g *generator) IsDone() bool {
 	return bool(C.IsDone(g.generatorPtr))
+}
+
+func (g *generator) IsSessionTerminated() bool {
+	return bool(C.IsSessionTerminated(g.generatorPtr))
+}
+
+func (g *generator) RewindTo(newLength int) error {
+	result := C.GeneratorRewindTo(g.generatorPtr, C.size_t(newLength))
+	if err := OgaResultToError(result); err != nil {
+		return fmt.Errorf("RewindTo failed: %w", err)
+	}
+	return nil
 }
 
 func (t *tokenizer) ApplyChatTemplate(inputMessages []byte, tools []byte, addGenerationPrompt bool) (string, error) {
@@ -603,6 +669,17 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, tools []st
 		s.mutex.Unlock()
 		return nil, nil, err
 	}
+	if generationOptions.Adapters != nil && generationOptions.ActiveAdapter != "" {
+		if err := generationOptions.Adapters.SetActiveAdapter(generator, generationOptions.ActiveAdapter); err != nil {
+			sequences.destroy()
+			for _, ts := range tokenizerStreams {
+				ts.destroy()
+			}
+			generator.destroy()
+			s.mutex.Unlock()
+			return nil, nil, fmt.Errorf("failed to set active adapter: %w", err)
+		}
+	}
 	if err = generator.addSequences(sequences); err != nil {
 		sequences.destroy()
 		for _, ts := range tokenizerStreams {
@@ -618,36 +695,34 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, tools []st
 }
 
 // GenerateWithImages generates text using pre-processed named tensors (for multimodal inputs).
-// Currently only supports a single prompt.
 func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, images *Images, tools []string, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
 	s.mutex.Lock()
 
-	// Current limitation: underlying C API supports a single prompt with image tags
-	if len(messages) != 1 {
-		s.mutex.Unlock()
-		return nil, nil, errors.New("GenerateWithImages currently supports only a single message set")
-	}
-
-	// Build prompt from chat template using messages[0]
-	msgJSON, err := json.Marshal(messages[0])
-	if err != nil {
-		s.mutex.Unlock()
-		return nil, nil, fmt.Errorf("failed to marshal input message: %w", err)
-	}
-
+	// Build prompts from chat template
+	prompts := make([]string, len(messages))
 	rawTools := make([]json.RawMessage, len(tools))
 	for i, t := range tools {
 		rawTools[i] = json.RawMessage(t)
 	}
 	toolsJSON, err := json.Marshal(rawTools)
 	if err != nil {
+		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
 	}
 
-	prompt, templateErr := s.tokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
-	if templateErr != nil {
-		s.mutex.Unlock()
-		return nil, nil, fmt.Errorf("failed to apply chat template: %w", templateErr)
+	for i, m := range messages {
+		msgJSON, err := json.Marshal(m)
+		if err != nil {
+			s.mutex.Unlock()
+			return nil, nil, fmt.Errorf("failed to marshal input message: %w", err)
+		}
+
+		prompt, templateErr := s.tokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
+		if templateErr != nil {
+			s.mutex.Unlock()
+			return nil, nil, fmt.Errorf("failed to apply chat template: %w", templateErr)
+		}
+		prompts[i] = prompt
 	}
 
 	// Process images with the templated prompt (should include <|image_1|> etc.)
@@ -660,7 +735,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		}
 	}
 
-	tensors, err := s.processor.ProcessImages(prompt, images)
+	tensors, err := s.processor.ProcessImages(prompts, images)
 	if err != nil {
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("ProcessImages failed: %w", err)
@@ -678,6 +753,14 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 	if err != nil {
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to create generator: %w", err)
+	}
+
+	if generationOptions.Adapters != nil && generationOptions.ActiveAdapter != "" {
+		if err := generationOptions.Adapters.SetActiveAdapter(generator, generationOptions.ActiveAdapter); err != nil {
+			generator.destroy()
+			s.mutex.Unlock()
+			return nil, nil, fmt.Errorf("failed to set active adapter: %w", err)
+		}
 	}
 
 	// Set the named tensors as inputs
@@ -786,7 +869,7 @@ func CreateSessionWithOptions(configDirectoryPath string, providers []string, pr
 	}
 
 	// Create Tokenizer
-	model := model{modelPtr: cModel}
+	model := Model{modelPtr: cModel}
 	tokenizer, err := newTokenizerFromModel(model)
 	if err != nil {
 		C.DestroyOgaModel(cModel)
@@ -829,7 +912,7 @@ func CreateSession(modelPath string) (*Session, error) {
 		return nil, errors.New("CreateOgaModel returned nil model without error")
 	}
 
-	model := model{modelPtr: cModel}
+	model := Model{modelPtr: cModel}
 	tokenizer, err := newTokenizerFromModel(model)
 	if err != nil {
 		C.DestroyOgaModel(cModel)

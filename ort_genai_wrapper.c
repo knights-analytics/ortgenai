@@ -3,6 +3,7 @@
 static GenAiApiTable g_api = {0}; // api table
 static int g_initialized = 0;
 static int g_engine_initialized = 0;
+static int g_adapters_initialized = 0;
 
 int SetGenAiApi(void* createModel,
 				void* resultGetError,
@@ -50,6 +51,20 @@ int SetGenAiApi(void* createModel,
 			void* destroyStringArray,
 			void* stringArrayAddString,
 			void* processorProcessImagesAndPrompts,
+			void* configAddModelData,
+			void* configRemoveModelData,
+			void* configOverlay,
+			void* configSetDecoderProviderOptionsHardwareDeviceType,
+			void* configSetDecoderProviderOptionsHardwareDeviceId,
+			void* configSetDecoderProviderOptionsHardwareVendorId,
+			void* configClearDecoderProviderOptionsHardwareDeviceType,
+			void* configClearDecoderProviderOptionsHardwareDeviceId,
+			void* configClearDecoderProviderOptionsHardwareVendorId,
+			void* generatorIsSessionTerminated,
+			void* generatorRewindTo,
+			void* generatorSetModelInput,
+			void* generatorSetLogits,
+			void* tokenizerGetEosTokenIds,
 	// Guidance/constrained-generation (optional — may be NULL on older runtimes)
 	void* generatorParamsSetGuidance) {
 	if (g_initialized) return 0; // already initialized
@@ -59,13 +74,16 @@ int SetGenAiApi(void* createModel,
 		!applyChatTemplate || !destroyString || !createSequences || !destroySequences || !tokenizerEncode ||
 		!createGenerator || !destroyGenerator || !createGeneratorParams || !destroyGeneratorParams ||
 		!generatorParamsSetSearchNumber || !generatorAppendTokenSequences || !generatorSetInputs || !generatorGenerateNextToken ||
-		!generatorGetSequenceCount || !generatorGetSequenceData || !tokenizerStreamDecode || !isDone || !tokenizerGetEosTokenIds ||
+		!generatorGetSequenceCount || !generatorGetSequenceData || !tokenizerStreamDecode || !isDone || !isSessionTerminated || !generatorRewindTo || !generatorSetModelInput || !generatorSetLogits || !tokenizerGetEosTokenIds ||
 		// Config
 		!createConfig || !configClearProviders || !configAppendProvider || !configSetProviderOption || !createModelFromConfig || !destroyConfig ||
 		// Multimodal
 		!loadImage || !loadImages || !loadImagesFromBuffers || !destroyImages ||
 		!createMultiModalProcessor || !destroyMultiModalProcessor || !processorProcessImages ||
-		!destroyNamedTensors || !createStringArray || !destroyStringArray || !stringArrayAddString || !processorProcessImagesAndPrompts) {
+		!destroyNamedTensors || !createStringArray || !destroyStringArray || !stringArrayAddString || !processorProcessImagesAndPrompts ||
+		!configAddModelData || !configRemoveModelData || !configOverlay ||
+		!configSetDecoderProviderOptionsHardwareDeviceType || !configSetDecoderProviderOptionsHardwareDeviceId || !configSetDecoderProviderOptionsHardwareVendorId ||
+		!configClearDecoderProviderOptionsHardwareDeviceType || !configClearDecoderProviderOptionsHardwareDeviceId || !configClearDecoderProviderOptionsHardwareVendorId) {
 		return 1;
 	}
 	g_api.CreateModel = (PFN_OgaCreateModel) createModel;
@@ -93,6 +111,10 @@ int SetGenAiApi(void* createModel,
 	g_api.GeneratorGetSequenceData = (PFN_OgaGeneratorGetSequenceData) generatorGetSequenceData;
 	g_api.TokenizerStreamDecode = (PFN_OgaTokenizerStreamDecode) tokenizerStreamDecode;
 	g_api.IsDone = (PFN_OgaGeneratorIsDone) isDone;
+	g_api.IsSessionTerminated = (PFN_OgaGeneratorIsSessionTerminated) generatorIsSessionTerminated;
+	g_api.GeneratorRewindTo = (PFN_OgaGenerator_RewindTo) generatorRewindTo;
+	g_api.GeneratorSetModelInput = (PFN_OgaGenerator_SetModelInput) generatorSetModelInput;
+	g_api.GeneratorSetLogits = (PFN_OgaGenerator_SetLogits) generatorSetLogits;
 	g_api.TokenizerGetEosTokenIds = (PFN_OgaTokenizerGetEosTokenIds) tokenizerGetEosTokenIds;
 	// Config
 	g_api.CreateConfig = (PFN_OgaCreateConfig) createConfig;
@@ -114,6 +136,20 @@ int SetGenAiApi(void* createModel,
 	g_api.DestroyStringArray = (PFN_OgaDestroyStringArray) destroyStringArray;
 	g_api.StringArrayAddString = (PFN_OgaStringArrayAddString) stringArrayAddString;
 	g_api.ProcessorProcessImagesAndPrompts = (PFN_OgaProcessorProcessImagesAndPrompts) processorProcessImagesAndPrompts;
+	g_api.ConfigAddModelData = (PFN_OgaConfigAddModelData) configAddModelData;
+	g_api.ConfigRemoveModelData = (PFN_OgaConfigRemoveModelData) configRemoveModelData;
+	g_api.ConfigOverlay = (PFN_OgaConfigOverlay) configOverlay;
+	g_api.ConfigSetDecoderProviderOptionsHardwareDeviceType = (PFN_OgaConfigSetDecoderProviderOptionsHardwareDeviceType) configSetDecoderProviderOptionsHardwareDeviceType;
+	g_api.ConfigSetDecoderProviderOptionsHardwareDeviceId = (PFN_OgaConfigSetDecoderProviderOptionsHardwareDeviceId) configSetDecoderProviderOptionsHardwareDeviceId;
+	g_api.ConfigSetDecoderProviderOptionsHardwareVendorId = (PFN_OgaConfigSetDecoderProviderOptionsHardwareVendorId) configSetDecoderProviderOptionsHardwareVendorId;
+	g_api.ConfigClearDecoderProviderOptionsHardwareDeviceType = (PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceType) configClearDecoderProviderOptionsHardwareDeviceType;
+	g_api.ConfigClearDecoderProviderOptionsHardwareDeviceId = (PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceId) configClearDecoderProviderOptionsHardwareDeviceId;
+	g_api.ConfigClearDecoderProviderOptionsHardwareVendorId = (PFN_OgaConfigClearDecoderProviderOptionsHardwareVendorId) configClearDecoderProviderOptionsHardwareVendorId;
+	g_api.IsSessionTerminated = (PFN_OgaGeneratorIsSessionTerminated) generatorIsSessionTerminated;
+	g_api.GeneratorRewindTo = (PFN_OgaGenerator_RewindTo) generatorRewindTo;
+	g_api.GeneratorSetModelInput = (PFN_OgaGenerator_SetModelInput) generatorSetModelInput;
+	g_api.GeneratorSetLogits = (PFN_OgaGenerator_SetLogits) generatorSetLogits;
+	g_api.TokenizerGetEosTokenIds = (PFN_OgaTokenizerGetEosTokenIds) tokenizerGetEosTokenIds;
 	if (generatorParamsSetGuidance) g_api.GeneratorParamsSetGuidance = (PFN_OgaGeneratorParamsSetGuidance) generatorParamsSetGuidance;
 	g_initialized = 1;
 	return 0;
@@ -259,6 +295,26 @@ bool IsDone(const OgaGenerator* generator) {
 	return g_api.IsDone(generator);
 }
 
+bool IsSessionTerminated(const OgaGenerator* generator) {
+	if (!g_initialized || !g_api.IsSessionTerminated) return false;
+	return g_api.IsSessionTerminated(generator);
+}
+
+OgaResult* GeneratorRewindTo(OgaGenerator* generator, size_t new_length) {
+	if (!g_initialized || !g_api.GeneratorRewindTo) return NULL;
+	return g_api.GeneratorRewindTo(generator, new_length);
+}
+
+OgaResult* GeneratorSetModelInput(OgaGenerator* generator, const char* name, OgaTensor* tensor) {
+	if (!g_initialized || !g_api.GeneratorSetModelInput) return NULL;
+	return g_api.GeneratorSetModelInput(generator, name, tensor);
+}
+
+OgaResult* GeneratorSetLogits(OgaGenerator* generator, OgaTensor* tensor) {
+	if (!g_initialized || !g_api.GeneratorSetLogits) return NULL;
+	return g_api.GeneratorSetLogits(generator, tensor);
+}
+
 OgaResult* OgaTokenizerGetEosTokenIds(const OgaTokenizer* tokenizer, const int32_t** eos_token_ids, size_t* token_count) {
     if (!g_initialized || !g_api.TokenizerGetEosTokenIds) return NULL;
     return g_api.TokenizerGetEosTokenIds(tokenizer, eos_token_ids, token_count);
@@ -280,9 +336,49 @@ OgaResult* OgaConfigAppendProvider(OgaConfig* config, const char* provider) {
 	return g_api.ConfigAppendProvider(config, provider);
 }
 
-OgaResult* OgaConfigSetProviderOption(OgaConfig* config, const char* provider, const char* key, const char* value) {
-	if (!g_initialized || !g_api.ConfigSetProviderOption) return NULL;
-	return g_api.ConfigSetProviderOption(config, provider, key, value);
+OgaResult* OgaConfigAddModelData(OgaConfig* config, const char* model_filename, const void* model_data, size_t model_data_length) {
+	if (!g_initialized || !g_api.ConfigAddModelData) return NULL;
+	return g_api.ConfigAddModelData(config, model_filename, model_data, model_data_length);
+}
+
+OgaResult* OgaConfigRemoveModelData(OgaConfig* config, const char* model_filename) {
+	if (!g_initialized || !g_api.ConfigRemoveModelData) return NULL;
+	return g_api.ConfigRemoveModelData(config, model_filename);
+}
+
+OgaResult* OgaConfigOverlay(OgaConfig* config, const char* json) {
+	if (!g_initialized || !g_api.ConfigOverlay) return NULL;
+	return g_api.ConfigOverlay(config, json);
+}
+
+OgaResult* OgaConfigSetDecoderProviderOptionsHardwareDeviceType(OgaConfig* config, const char* provider, const char* hardware_device_type) {
+	if (!g_initialized || !g_api.ConfigSetDecoderProviderOptionsHardwareDeviceType) return NULL;
+	return g_api.ConfigSetDecoderProviderOptionsHardwareDeviceType(config, provider, hardware_device_type);
+}
+
+OgaResult* OgaConfigSetDecoderProviderOptionsHardwareDeviceId(OgaConfig* config, const char* provider, uint32_t hardware_device_id) {
+	if (!g_initialized || !g_api.ConfigSetDecoderProviderOptionsHardwareDeviceId) return NULL;
+	return g_api.ConfigSetDecoderProviderOptionsHardwareDeviceId(config, provider, hardware_device_id);
+}
+
+OgaResult* OgaConfigSetDecoderProviderOptionsHardwareVendorId(OgaConfig* config, const char* provider, uint32_t hardware_vendor_id) {
+	if (!g_initialized || !g_api.ConfigSetDecoderProviderOptionsHardwareVendorId) return NULL;
+	return g_api.ConfigSetDecoderProviderOptionsHardwareVendorId(config, provider, hardware_vendor_id);
+}
+
+OgaResult* OgaConfigClearDecoderProviderOptionsHardwareDeviceType(OgaConfig* config, const char* provider) {
+	if (!g_initialized || !g_api.ConfigClearDecoderProviderOptionsHardwareDeviceType) return NULL;
+	return g_api.ConfigClearDecoderProviderOptionsHardwareDeviceType(config, provider);
+}
+
+OgaResult* OgaConfigClearDecoderProviderOptionsHardwareDeviceId(OgaConfig* config, const char* provider) {
+	if (!g_initialized || !g_api.ConfigClearDecoderProviderOptionsHardwareDeviceId) return NULL;
+	return g_api.ConfigClearDecoderProviderOptionsHardwareDeviceId(config, provider);
+}
+
+OgaResult* OgaConfigClearDecoderProviderOptionsHardwareVendorId(OgaConfig* config, const char* provider) {
+	if (!g_initialized || !g_api.ConfigClearDecoderProviderOptionsHardwareVendorId) return NULL;
+	return g_api.ConfigClearDecoderProviderOptionsHardwareVendorId(config, provider);
 }
 
 OgaResult* CreateOgaModelFromConfig(const OgaConfig* config, OgaModel** out) {
@@ -396,6 +492,23 @@ int SetGenAiEngineApi(void* createEngine, void* destroyEngine,
 
 int GenAiEngineApiIsInitialized(void) { return g_engine_initialized; }
 
+// Adapters API initialization
+int SetGenAiAdaptersApi(void* createAdapters, void* destroyAdapters, void* loadAdapter, void* unloadAdapter, void* setActiveAdapter) {
+    if (g_adapters_initialized) return 0;
+    if (!createAdapters || !destroyAdapters || !loadAdapter || !unloadAdapter || !setActiveAdapter) {
+        return 1;
+    }
+    g_api.CreateAdapters = (PFN_OgaCreateAdapters) createAdapters;
+    g_api.DestroyAdapters = (PFN_OgaDestroyAdapters) destroyAdapters;
+    g_api.LoadAdapter = (PFN_OgaLoadAdapter) loadAdapter;
+    g_api.UnloadAdapter = (PFN_OgaUnloadAdapter) unloadAdapter;
+    g_api.SetActiveAdapter = (PFN_OgaSetActiveAdapter) setActiveAdapter;
+    g_adapters_initialized = 1;
+    return 0;
+}
+
+int GenAiAdaptersApiIsInitialized(void) { return g_adapters_initialized; }
+
 // Engine thin wrappers
 OgaResult* CreateOgaEngine(OgaModel* model, OgaEngine** out) {
 	if (!g_engine_initialized || !g_api.CreateEngine) return NULL;
@@ -467,4 +580,31 @@ OgaResult* RequestGetUnseenToken(OgaRequest* request, int32_t* out) {
 OgaResult* RequestIsDone(const OgaRequest* request, bool* out) {
 	if (!g_engine_initialized || !g_api.RequestIsDone) return NULL;
 	return g_api.RequestIsDone(request, out);
+}
+
+// Adapters thin wrappers
+OgaResult* CreateOgaAdapters(const OgaModel* model, OgaAdapters** out) {
+    if (!g_adapters_initialized || !g_api.CreateAdapters) return NULL;
+    return g_api.CreateAdapters(model, out);
+}
+
+void DestroyOgaAdapters(OgaAdapters* adapters) {
+    if (!adapters) return;
+    if (!g_adapters_initialized || !g_api.DestroyAdapters) return;
+    g_api.DestroyAdapters(adapters);
+}
+
+OgaResult* LoadOgaAdapter(OgaAdapters* adapters, const char* adapter_file_path, const char* adapter_name) {
+    if (!g_adapters_initialized || !g_api.LoadAdapter) return NULL;
+    return g_api.LoadAdapter(adapters, adapter_file_path, adapter_name);
+}
+
+OgaResult* UnloadOgaAdapter(OgaAdapters* adapters, const char* adapter_name) {
+    if (!g_adapters_initialized || !g_api.UnloadAdapter) return NULL;
+    return g_api.UnloadAdapter(adapters, adapter_name);
+}
+
+OgaResult* SetActiveOgaAdapter(OgaGenerator* generator, OgaAdapters* adapters, const char* adapter_name) {
+    if (!g_adapters_initialized || !g_api.SetActiveAdapter) return NULL;
+    return g_api.SetActiveAdapter(generator, adapters, adapter_name);
 }
