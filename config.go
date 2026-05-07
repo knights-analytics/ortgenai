@@ -112,24 +112,24 @@ func (c *Config) SetDecoderProviderOptionsHardwareDeviceType(provider, hardwareD
 	return nil
 }
 
-func (c *Config) SetDecoderProviderOptionsHardwareDeviceId(provider string, hardwareDeviceId uint32) error {
+func (c *Config) SetDecoderProviderOptionsHardwareDeviceID(provider string, hardwareDeviceID uint32) error {
 	cProvider := C.CString(provider)
 	defer C.free(unsafe.Pointer(cProvider))
 
-	result := C.OgaConfigSetDecoderProviderOptionsHardwareDeviceId(c.configPtr, cProvider, C.uint32_t(hardwareDeviceId))
+	result := C.OgaConfigSetDecoderProviderOptionsHardwareDeviceId(c.configPtr, cProvider, C.uint32_t(hardwareDeviceID))
 	if err := OgaResultToError(result); err != nil {
-		return fmt.Errorf("ConfigSetDecoderProviderOptionsHardwareDeviceId failed: %w", err)
+		return fmt.Errorf("ConfigSetDecoderProviderOptionsHardwareDeviceID failed: %w", err)
 	}
 	return nil
 }
 
-func (c *Config) SetDecoderProviderOptionsHardwareVendorId(provider string, hardwareVendorId uint32) error {
+func (c *Config) SetDecoderProviderOptionsHardwareVendorID(provider string, hardwareVendorID uint32) error {
 	cProvider := C.CString(provider)
 	defer C.free(unsafe.Pointer(cProvider))
 
-	result := C.OgaConfigSetDecoderProviderOptionsHardwareVendorId(c.configPtr, cProvider, C.uint32_t(hardwareVendorId))
+	result := C.OgaConfigSetDecoderProviderOptionsHardwareVendorId(c.configPtr, cProvider, C.uint32_t(hardwareVendorID))
 	if err := OgaResultToError(result); err != nil {
-		return fmt.Errorf("ConfigSetDecoderProviderOptionsHardwareVendorId failed: %w", err)
+		return fmt.Errorf("ConfigSetDecoderProviderOptionsHardwareVendorID failed: %w", err)
 	}
 	return nil
 }
@@ -145,31 +145,31 @@ func (c *Config) ClearDecoderProviderOptionsHardwareDeviceType(provider string) 
 	return nil
 }
 
-func (c *Config) ClearDecoderProviderOptionsHardwareDeviceId(provider string) error {
+func (c *Config) ClearDecoderProviderOptionsHardwareDeviceID(provider string) error {
 	cProvider := C.CString(provider)
 	defer C.free(unsafe.Pointer(cProvider))
 
 	result := C.OgaConfigClearDecoderProviderOptionsHardwareDeviceId(c.configPtr, cProvider)
 	if err := OgaResultToError(result); err != nil {
-		return fmt.Errorf("ConfigClearDecoderProviderOptionsHardwareDeviceId failed: %w", err)
+		return fmt.Errorf("ConfigClearDecoderProviderOptionsHardwareDeviceID failed: %w", err)
 	}
 	return nil
 }
 
-func (c *Config) ClearDecoderProviderOptionsHardwareVendorId(provider string) error {
+func (c *Config) ClearDecoderProviderOptionsHardwareVendorID(provider string) error {
 	cProvider := C.CString(provider)
 	defer C.free(unsafe.Pointer(cProvider))
 
 	result := C.OgaConfigClearDecoderProviderOptionsHardwareVendorId(c.configPtr, cProvider)
 	if err := OgaResultToError(result); err != nil {
-		return fmt.Errorf("ConfigClearDecoderProviderOptionsHardwareVendorId failed: %w", err)
+		return fmt.Errorf("ConfigClearDecoderProviderOptionsHardwareVendorID failed: %w", err)
 	}
 	return nil
 }
 
 func (c *Config) CreateModel() (*Model, error) {
 	var modelPtr *C.OgaModel
-	result := C.CreateModelFromConfig(c.configPtr, &modelPtr)
+	result := C.CreateOgaModelFromConfig(c.configPtr, &modelPtr)
 	if err := OgaResultToError(result); err != nil {
 		return nil, fmt.Errorf("CreateModelFromConfig failed: %w", err)
 	}

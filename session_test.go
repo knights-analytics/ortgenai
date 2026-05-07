@@ -177,3 +177,53 @@ func testGenericMultimodal(t *testing.T, s *Session) {
 		t.Fatal("no output generated from multimodal model")
 	}
 }
+
+func TestLoraAdapterSession(t *testing.T) {
+	SetSharedLibraryPath(getLibraryPath())
+
+	if err := InitializeEnvironment(); err != nil {
+		t.Fatalf("failed to initialize environment: %v", err)
+	}
+	defer func() {
+		if err := DestroyEnvironment(); err != nil {
+			t.Fatalf("failed to destroy environment: %v", err)
+		}
+	}()
+
+	modelPath := "./models/lora"
+	if _, err := os.Stat(modelPath); os.IsNotExist(err) {
+		t.Skip("Model not found at " + modelPath)
+	}
+
+	session, err := CreateSession(modelPath)
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	defer session.Destroy()
+
+	t.Run("Generation", func(t *testing.T) {
+		adapters, err := session.model.CreateAdapters()
+		if err != nil {
+			t.Fatalf("failed to create adapters: %v", err)
+		}
+		defer adapters.Destroy()
+
+		if err = adapters.LoadAdapter("./models/lora/onnx_adapter", "lora"); err != nil {
+			t.Fatalf("failed to load adapter: %v", err)
+		}
+
+		temperature := 0.0
+		topP := 0.9
+		seed := 42
+		options := &GenerationOptions{
+			MaxLength:     2048,
+			BatchSize:     1,
+			Temperature:   &temperature,
+			TopP:          &topP,
+			Seed:          &seed,
+			Adapters:      adapters,
+			ActiveAdapter: "lora",
+		}
+		testGenericGeneration(t, session, [][]Message{{{Role: "user", Content: "What is the square root of 25?"}}}, options)
+	})
+}

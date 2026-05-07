@@ -292,7 +292,7 @@ func InitializeGenAiLibrary() error {
 	symConfigClearDecoderProviderOptionsHardwareDeviceType := createSym(handle, "OgaConfigClearDecoderProviderOptionsHardwareDeviceType")
 	symConfigClearDecoderProviderOptionsHardwareDeviceId := createSym(handle, "OgaConfigClearDecoderProviderOptionsHardwareDeviceId")
 	symConfigClearDecoderProviderOptionsHardwareVendorId := createSym(handle, "OgaConfigClearDecoderProviderOptionsHardwareVendorId")
-	symIsSessionTerminated := createSym(handle, "OgaGeneratorIsSessionTerminated")
+	symIsSessionTerminated := createSym(handle, "OgaGenerator_IsSessionTerminated")
 	symGeneratorRewindTo := createSym(handle, "OgaGenerator_RewindTo")
 	symGeneratorSetModelInput := createSym(handle, "OgaGenerator_SetModelInput")
 	symGeneratorSetLogits := createSym(handle, "OgaGenerator_SetLogits")

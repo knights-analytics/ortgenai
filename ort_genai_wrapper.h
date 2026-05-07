@@ -232,11 +232,7 @@ int SetGenAiApi(void* createModel,
 	void* generatorGetSequenceData,
 	void* tokenizerStreamDecode,
 	void* isDone,
-	void* isSessionTerminated,
-	void* generatorRewindTo,
-	void* generatorSetModelInput,
-	void* generatorSetLogits,
-    void* tokenizerGetEosTokenIds,
+	void* tokenizerGetEosTokenIds,
 	// Config
 	void* createConfig,
 	void* configClearProviders,
@@ -266,6 +262,10 @@ int SetGenAiApi(void* createModel,
 	void* destroyStringArray,
 	void* stringArrayAddString,
 	void* processorProcessImagesAndPrompts,
+	void* isSessionTerminated,
+	void* generatorRewindTo,
+	void* generatorSetModelInput,
+	void* generatorSetLogits,
 	// Guidance/constrained-generation (optional — may be NULL on older runtimes)
 	void* generatorParamsSetGuidance);
 
@@ -302,6 +302,8 @@ size_t GeneratorGetSequenceCount(const OgaGenerator* generator, size_t sequence_
 const int32_t* GeneratorGetSequenceData(const OgaGenerator* generator, size_t sequence_index);
 OgaResult* TokenizerStreamDecode(OgaTokenizerStream* tokenizerStream, int32_t token, const char** output);
 bool IsDone(const OgaGenerator* generator);
+bool IsSessionTerminated(const OgaGenerator* generator);
+OgaResult* GeneratorRewindTo(OgaGenerator* generator, size_t new_length);
 OgaResult* OgaTokenizerGetEosTokenIds(const OgaTokenizer* tokenizer, const int32_t** eos_token_ids, size_t* token_count);
 
 // Config thin wrappers

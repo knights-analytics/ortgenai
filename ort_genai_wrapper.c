@@ -36,6 +36,15 @@ int SetGenAiApi(void* createModel,
 			void* configClearProviders,
 			void* configAppendProvider,
 			void* configSetProviderOption,
+			void* configAddModelData,
+			void* configRemoveModelData,
+			void* configOverlay,
+			void* configSetDecoderProviderOptionsHardwareDeviceType,
+			void* configSetDecoderProviderOptionsHardwareDeviceId,
+			void* configSetDecoderProviderOptionsHardwareVendorId,
+			void* configClearDecoderProviderOptionsHardwareDeviceType,
+			void* configClearDecoderProviderOptionsHardwareDeviceId,
+			void* configClearDecoderProviderOptionsHardwareVendorId,
 			void* createModelFromConfig,
 			void* destroyConfig,
 			// Multimodal
@@ -51,20 +60,10 @@ int SetGenAiApi(void* createModel,
 			void* destroyStringArray,
 			void* stringArrayAddString,
 			void* processorProcessImagesAndPrompts,
-			void* configAddModelData,
-			void* configRemoveModelData,
-			void* configOverlay,
-			void* configSetDecoderProviderOptionsHardwareDeviceType,
-			void* configSetDecoderProviderOptionsHardwareDeviceId,
-			void* configSetDecoderProviderOptionsHardwareVendorId,
-			void* configClearDecoderProviderOptionsHardwareDeviceType,
-			void* configClearDecoderProviderOptionsHardwareDeviceId,
-			void* configClearDecoderProviderOptionsHardwareVendorId,
-			void* generatorIsSessionTerminated,
+			void* isSessionTerminated,
 			void* generatorRewindTo,
 			void* generatorSetModelInput,
 			void* generatorSetLogits,
-			void* tokenizerGetEosTokenIds,
 	// Guidance/constrained-generation (optional — may be NULL on older runtimes)
 	void* generatorParamsSetGuidance) {
 	if (g_initialized) return 0; // already initialized
@@ -111,7 +110,7 @@ int SetGenAiApi(void* createModel,
 	g_api.GeneratorGetSequenceData = (PFN_OgaGeneratorGetSequenceData) generatorGetSequenceData;
 	g_api.TokenizerStreamDecode = (PFN_OgaTokenizerStreamDecode) tokenizerStreamDecode;
 	g_api.IsDone = (PFN_OgaGeneratorIsDone) isDone;
-	g_api.IsSessionTerminated = (PFN_OgaGeneratorIsSessionTerminated) generatorIsSessionTerminated;
+	g_api.IsSessionTerminated = (PFN_OgaGeneratorIsSessionTerminated) isSessionTerminated;
 	g_api.GeneratorRewindTo = (PFN_OgaGenerator_RewindTo) generatorRewindTo;
 	g_api.GeneratorSetModelInput = (PFN_OgaGenerator_SetModelInput) generatorSetModelInput;
 	g_api.GeneratorSetLogits = (PFN_OgaGenerator_SetLogits) generatorSetLogits;
@@ -145,11 +144,6 @@ int SetGenAiApi(void* createModel,
 	g_api.ConfigClearDecoderProviderOptionsHardwareDeviceType = (PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceType) configClearDecoderProviderOptionsHardwareDeviceType;
 	g_api.ConfigClearDecoderProviderOptionsHardwareDeviceId = (PFN_OgaConfigClearDecoderProviderOptionsHardwareDeviceId) configClearDecoderProviderOptionsHardwareDeviceId;
 	g_api.ConfigClearDecoderProviderOptionsHardwareVendorId = (PFN_OgaConfigClearDecoderProviderOptionsHardwareVendorId) configClearDecoderProviderOptionsHardwareVendorId;
-	g_api.IsSessionTerminated = (PFN_OgaGeneratorIsSessionTerminated) generatorIsSessionTerminated;
-	g_api.GeneratorRewindTo = (PFN_OgaGenerator_RewindTo) generatorRewindTo;
-	g_api.GeneratorSetModelInput = (PFN_OgaGenerator_SetModelInput) generatorSetModelInput;
-	g_api.GeneratorSetLogits = (PFN_OgaGenerator_SetLogits) generatorSetLogits;
-	g_api.TokenizerGetEosTokenIds = (PFN_OgaTokenizerGetEosTokenIds) tokenizerGetEosTokenIds;
 	if (generatorParamsSetGuidance) g_api.GeneratorParamsSetGuidance = (PFN_OgaGeneratorParamsSetGuidance) generatorParamsSetGuidance;
 	g_initialized = 1;
 	return 0;
@@ -334,6 +328,11 @@ OgaResult* OgaConfigClearProviders(OgaConfig* config) {
 OgaResult* OgaConfigAppendProvider(OgaConfig* config, const char* provider) {
 	if (!g_initialized || !g_api.ConfigAppendProvider) return NULL;
 	return g_api.ConfigAppendProvider(config, provider);
+}
+
+OgaResult* OgaConfigSetProviderOption(OgaConfig* config, const char* provider, const char* key, const char* value) {
+	if (!g_initialized || !g_api.ConfigSetProviderOption) return NULL;
+	return g_api.ConfigSetProviderOption(config, provider, key, value);
 }
 
 OgaResult* OgaConfigAddModelData(OgaConfig* config, const char* model_filename, const void* model_data, size_t model_data_length) {
