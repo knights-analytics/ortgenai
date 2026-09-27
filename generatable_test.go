@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -342,11 +343,14 @@ func testGenericContextCancellation(t *testing.T, g Generatable) {
 	fmt.Printf("Cancelled after %d tokens\n", len(tokens))
 }
 
-// getLibraryPath returns the path to libonnxruntime-genai from ONNXRUNTIME_GENAI_LIB env var
-// or defaults to /usr/lib/libonnxruntime-genai.so.
+// getLibraryPath returns the path to the ONNX Runtime GenAI library from ONNXRUNTIME_GENAI_LIB
+// or its platform-specific default.
 func getLibraryPath() string {
 	if path := os.Getenv("ONNXRUNTIME_GENAI_LIB"); path != "" {
 		return path
+	}
+	if runtime.GOOS == "windows" {
+		return "onnxruntime-genai.dll"
 	}
 	return "/usr/lib/libonnxruntime-genai.so"
 }

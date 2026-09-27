@@ -1,15 +1,37 @@
 package ortgenai
 
 /*
-#cgo LDFLAGS: -ldl
-#include <dlfcn.h>
+#cgo linux LDFLAGS: -ldl
+#include <stdio.h>
 #include <stdlib.h>
+#ifdef _WIN32
+#include <windows.h>
+#define RTLD_LAZY 0
+static void* dlopen(const char* path, int flags) {
+	(void)flags;
+	return (void*)LoadLibraryExA(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+}
+static void* dlsym(void* handle, const char* name) {
+	return (void*)GetProcAddress((HMODULE)handle, name);
+}
+static int dlclose(void* handle) {
+	return FreeLibrary((HMODULE)handle) ? 0 : (int)GetLastError();
+}
+static const char* dlerror(void) {
+	static char error[64];
+	snprintf(error, sizeof(error), "Windows error %lu", (unsigned long)GetLastError());
+	return error;
+}
+#else
+#include <dlfcn.h>
+#endif
 #include "ort_genai_wrapper.h"
 */
 import "C"
 
 import (
 	"fmt"
+	"runtime"
 	"unsafe"
 )
 
@@ -46,6 +68,9 @@ func InitializeGenAiLibrary() error {
 	libPath := onnxGenaiSharedLibraryPath
 	if libPath == "" {
 		libPath = "libonnxruntime-genai.so"
+		if runtime.GOOS == "windows" {
+			libPath = "onnxruntime-genai.dll"
+		}
 	}
 	cName := C.CString(libPath)
 	defer C.free(unsafe.Pointer(cName))
