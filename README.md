@@ -6,10 +6,14 @@ This package provides a thin, idiomatic Go wrapper around the ONNX Runtime GenAI
 
 - Session and model creation from local model folders
 - Tokenization and chat templating
-- Batched, streaming text generation with per-token deltas
+- Owned tokenizer and tensor resources, including batch encode/decode
+- Session-based batched, streaming text generation with per-token deltas
+- Synchronous engine requests with reusable event buffers and per-turn options
+- Standalone generators, tensor/logit access, and MTP speculative generation
+- Audio resources, model adapters, runtime settings, and process-wide device/logging controls
 - Runtime statistics (tokens/sec, prefill timings)
 - Provider selection and advanced provider options
-- Multimodal input support (text + images)
+- Multimodal input support (text, images, and audio)
 
 The GenAI shared library is loaded dynamically. Linux (`.so`) and Windows (`.dll`) are supported.
 
@@ -29,9 +33,10 @@ Note: This implementation is still alpha so the API may change in future release
 
 ## Requirements
 
-- Go 1.19+
+- Go 1.27+
 - Linux with glibc, or 64-bit Windows
 - ONNX Runtime GenAI shared library and dependencies available at runtime:
+  - ORT GenAI `0.17.0` or newer with the explicit engine/request API
   - Linux: `libonnxruntime-genai.so` and `libonnxruntime.so`
   - Windows: `onnxruntime-genai.dll` and `onnxruntime.dll`
 - A local model directory compatible with ONNX Runtime GenAI (e.g., a converted `Phi-3.5` model folder)
@@ -148,6 +153,54 @@ session, err := genai.CreateSessionWithOptions(
 
 `Session.Generate` accepts multiple conversations in one call: `[][]Message`. The returned channel carries `SequenceDelta` items, each labeled with the `Sequence` index so you can route output per-conversation.
 
+### Explicit engine turns
+
+`Engine` uses a synchronous, owner-thread API rather than channels or background dispatch. Keep all calls for an engine, its requests, and event buffers serialized on the same OS thread. Native events and usage views are copied before `Run` returns, so Go values remain valid when the event buffer is reused.
+
+```go
+runtime.LockOSThread()
+defer runtime.UnlockOSThread()
+
+engine, err := genai.CreateEngine("./models/phi3.5")
+if err != nil { panic(err) }
+defer engine.Destroy()
+
+tokenizer, err := genai.CreateTokenizer("./models/phi3.5")
+if err != nil { panic(err) }
+defer tokenizer.Destroy()
+inputTokenIDs, err := tokenizer.Encode("What is the capital of France?")
+if err != nil { panic(err) }
+
+buffer, err := engine.CreateEventBuffer(8)
+if err != nil { panic(err) }
+defer buffer.Destroy()
+
+request, err := engine.CreateRequest(nil)
+if err != nil { panic(err) }
+defer request.Destroy()
+
+turnOptions, err := request.CreateTurnOptions()
+if err != nil { panic(err) }
+defer turnOptions.Destroy()
+if err := turnOptions.SetMaxGeneratedTokens(128); err != nil { panic(err) }
+
+turnID, err := request.BeginTurn(inputTokenIDs, turnOptions)
+if err != nil { panic(err) }
+for {
+    events, err := engine.Run(buffer)
+    if err != nil { panic(err) }
+    finished := false
+    for _, event := range events {
+        if event.TurnID == turnID && event.Flags&genai.EventFlagTurnFinished != 0 {
+            finished = true
+        }
+    }
+    if finished { break }
+}
+```
+
+Token IDs can be supplied directly to `BeginTurn`; `Tokenizer.Encode` and `Tokenizer.Decode` provide copied Go values. Destroy requests, tokenizers, and buffers before shutting down the GenAI environment.
+
 ### Statistics
 
 After generation, inspect `session.GetStatistics()` for fields such as `TokensPerSecond`, cumulative token counts, and prefill timings.
@@ -155,15 +208,19 @@ After generation, inspect `session.GetStatistics()` for fields such as `TokensPe
 
 ## Running tests
 
-Local tests require the GenAI shared library and a local model directory. The provided unit test expects:
+Local tests require the matching GenAI shared library and local model directories. Model-dependent tests skip when their fixtures are absent. On Windows, set `ONNXRUNTIME_GENAI_LIB` to the library path before running tests, for example:
 
 - `libonnxruntime-genai.so` on Linux or `onnxruntime-genai.dll` on Windows (adjust via `SetSharedLibraryPath`), and
-- a model directory at `./_models/phi3.5` (update the path as needed).
+- the model directories referenced by the integration tests.
 
 Run:
 
 ```bash
 go test ./...
+```
+
+```powershell
+$env:ONNXRUNTIME_GENAI_LIB='C:\ort-lib\onnxruntime-genai.dll'; go test ./...
 ```
 
 
