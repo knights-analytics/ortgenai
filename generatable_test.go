@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
@@ -13,11 +15,6 @@ import (
 	"testing"
 	"time"
 )
-
-type Generatable interface {
-	Generate(ctx context.Context, messages [][]Message, tools []string, options *GenerationOptions) (<-chan SequenceDelta, <-chan error, error)
-	GetStatistics() *Statistics
-}
 
 // testImagePNG is a minimal valid 1x1 red PNG image (base64 encoded).
 var testImagePNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -207,7 +204,7 @@ func TestLoadImageFromBuffer(t *testing.T) {
 	}
 }
 
-func testGenericGeneration(t *testing.T, g Generatable, messages [][]Message, options *GenerationOptions) {
+func testGenericGeneration(t *testing.T, g *Session, messages [][]Message, options *GenerationOptions) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -245,7 +242,7 @@ func testGenericGeneration(t *testing.T, g Generatable, messages [][]Message, op
 	fmt.Printf("Statistics: %+v\n", stats)
 }
 
-func testGenericConcurrentGeneration(t *testing.T, g Generatable) {
+func testGenericConcurrentGeneration(t *testing.T, g *Session) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -313,7 +310,7 @@ func testGenericConcurrentGeneration(t *testing.T, g Generatable) {
 	}
 }
 
-func testGenericContextCancellation(t *testing.T, g Generatable) {
+func testGenericContextCancellation(t *testing.T, g *Session) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -343,11 +340,19 @@ func testGenericContextCancellation(t *testing.T, g Generatable) {
 	fmt.Printf("Cancelled after %d tokens\n", len(tokens))
 }
 
-// getLibraryPath returns the path to the ONNX Runtime GenAI library from ONNXRUNTIME_GENAI_LIB
+// getLibraryPath returns the path to the ONNX Runtime GenAI library from ONNXRUNTIME_GENAI_LIB,
+// or the platform-specific onnxruntime-genai file under the directory named by ONNXRUNTIME_DIR,
 // or its platform-specific default.
 func getLibraryPath() string {
-	if path := os.Getenv("ONNXRUNTIME_GENAI_LIB"); path != "" {
-		return path
+	if dir := os.Getenv("ONNXRUNTIME_DIR"); dir != "" {
+		switch runtime.GOOS {
+		case "windows":
+			return filepath.Join(dir, "onnxruntime-genai.dll")
+		case "darwin":
+			return filepath.Join(dir, "libonnxruntime-genai.dylib")
+		default:
+			return filepath.Join(dir, "libonnxruntime-genai.so")
+		}
 	}
 	if runtime.GOOS == "windows" {
 		return "onnxruntime-genai.dll"
@@ -355,7 +360,7 @@ func getLibraryPath() string {
 	return "/usr/lib/libonnxruntime-genai.so"
 }
 
-func testGenericGenerationWithTools(t *testing.T, g Generatable) {
+func testGenericGenerationWithTools(t *testing.T, g *Session) {
 	t.Helper()
 	// Two minimal Hermes-style tool definitions.
 	tools := []string{
@@ -454,6 +459,32 @@ tool_json: %json {"anyOf": [` +
 		t.Fatal("expected non-empty output from tool-calling generation")
 	}
 	checkToolCalls(t, output)
+}
+
+func TestGenerateMultimodalEmptyBatch(t *testing.T) {
+	// The empty-batch validation path is pure Go and does not require a native
+	// session: GenerateMultimodal returns ErrNoConversations and nil channels
+	// before touching any native state. This lets CI (where the vision model
+	// fixture is not downloaded) verify the guard without a full model.
+	s := &Session{}
+	out, errCh, err := s.GenerateMultimodal(context.Background(), nil, nil, &GenerationOptions{MaxLength: 8})
+	if !errors.Is(err, ErrNoConversations) {
+		t.Fatalf("expected ErrNoConversations, got %v", err)
+	}
+	if out != nil || errCh != nil {
+		t.Fatalf("expected nil channels on error, got out=%v errCh=%v", out, errCh)
+	}
+
+	// A conversation with zero messages is rejected before any native call.
+	out2, errCh2, err2 := s.GenerateMultimodal(context.Background(),
+		[]MultimodalConversation{{}},
+		nil, &GenerationOptions{MaxLength: 8})
+	if err2 == nil {
+		t.Fatalf("expected error for empty message list, got nil (out=%v errCh=%v)", out2, errCh2)
+	}
+	if out2 != nil || errCh2 != nil {
+		t.Fatalf("expected nil channels on error, got out=%v errCh=%v", out2, errCh2)
+	}
 }
 
 func checkToolCalls(t *testing.T, output string) {
