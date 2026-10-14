@@ -3,12 +3,18 @@ package ortgenai
 /*
 #cgo CFLAGS: -O2 -g
 #include "ort_genai_wrapper.h"
+
+static OgaResult* overlayMTPConfig(void* symbol, OgaConfig* config) {
+	return ((OgaResult* (*)(OgaConfig*, const char*))symbol)(
+		config, "{\"model\":{\"decoder\":{\"filename\":\"mtp.onnx\"}}}");
+}
 */
 import "C"
 
 import (
 	"errors"
 	"fmt"
+	"path/filepath"
 	"unsafe"
 )
 
@@ -28,6 +34,8 @@ type MTPStatistics struct {
 }
 
 // CreateMTPGenerator creates a greedy, single-sequence self-speculative generator.
+// When both paths refer to the same directory, the MTP model uses mtp.onnx
+// and its external data alongside the main model, sharing the root config.
 func CreateMTPGenerator(mainModelPath, mtpModelPath string, maxLength int) (*MTPGenerator, error) {
 	if !IsInitialized() {
 		return nil, ErrNotInitialized
@@ -45,9 +53,15 @@ func CreateMTPGenerator(mainModelPath, mtpModelPath string, maxLength int) (*MTP
 	if err := OgaResultToError(C.CreateOgaModel(mainPath, &generator.mainModel)); err != nil {
 		return nil, fmt.Errorf("creating main model: %w", err)
 	}
-	if err := OgaResultToError(C.CreateOgaModel(mtpPath, &generator.mtpModel)); err != nil {
+	var mtpErr error
+	if filepath.Clean(mainModelPath) == filepath.Clean(mtpModelPath) {
+		mtpErr = createRootMTPModel(mtpPath, &generator.mtpModel)
+	} else {
+		mtpErr = OgaResultToError(C.CreateOgaModel(mtpPath, &generator.mtpModel))
+	}
+	if mtpErr != nil {
 		generator.Destroy()
-		return nil, fmt.Errorf("creating MTP model: %w", err)
+		return nil, fmt.Errorf("creating MTP model: %w", mtpErr)
 	}
 	if err := OgaResultToError(C.CreateOgaGeneratorParams(generator.mainModel, &generator.params)); err != nil {
 		generator.Destroy()
@@ -78,6 +92,25 @@ func CreateMTPGenerator(mainModelPath, mtpModelPath string, maxLength int) (*MTP
 		return nil, errors.New("MTP generator creation returned nil without error")
 	}
 	return generator, nil
+}
+
+func createRootMTPModel(path *C.char, model **C.OgaModel) error {
+	symbol := createSym(genAiLibraryHandle, "OgaConfigOverlay")
+	if symbol == nil {
+		return errors.New("missing OgaConfigOverlay")
+	}
+	var config *C.OgaConfig
+	if err := OgaResultToError(C.CreateOgaConfig(path, &config)); err != nil {
+		return fmt.Errorf("creating root MTP config: %w", err)
+	}
+	if config == nil {
+		return errors.New("root MTP config creation returned nil without error")
+	}
+	defer C.DestroyOgaConfig(config)
+	if err := OgaResultToError(C.overlayMTPConfig(symbol, config)); err != nil {
+		return fmt.Errorf("setting root MTP decoder filename: %w", err)
+	}
+	return OgaResultToError(C.CreateOgaModelFromConfig(config, model))
 }
 
 func (g *MTPGenerator) check() error {

@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"time"
 	"unsafe"
@@ -86,9 +85,9 @@ func tokenIDsFromSequences(seqs *sequences) ([]int32, error) {
 // drives exactly one MTP generation per conversation sequentially and
 // relabels the emitted sequence so index i always refers to messages[i].
 //
-// The speculative model is loaded from <modelPath>/MTP relative to the
-// directory used by CreateSession — matching the pinned ortgenai mtp.go's
-// convention.
+// The speculative model is loaded from <modelPath>/MTP when that directory
+// exists. Otherwise, mtp.onnx and mtp.onnx.data in the model directory are
+// loaded using the root configuration with its decoder filename overridden.
 //
 // GenerationOptions.BatchSize is honored as 1 per conversation (matching
 // GenerateWithImages); the pinned MTP path is greedy, so Temperature/TopP/
@@ -141,7 +140,11 @@ func (s *Session) GenerateMTP(ctx context.Context, messages [][]Message, tools [
 		defer close(outputChan)
 		defer close(errChan)
 
-		mtpModelPath := filepath.Join(s.modelPath, "MTP")
+		mtpModelPath, err := resolveMTPModelPath(s.modelPath)
+		if err != nil {
+			sendGenerationError(errChan, err)
+			return
+		}
 
 		// Destroy in reverse creation order; destroy() is idempotent.
 		var runs []*mtpRun
