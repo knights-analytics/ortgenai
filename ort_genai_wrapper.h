@@ -392,6 +392,34 @@ size_t EngineCapabilitiesGetMaxScheduledTokens(const OgaEngineCapabilities* capa
 uint64_t EngineCapabilitiesGetMaxRequestLength(const OgaEngineCapabilities* capabilities);
 void DestroyEngineCapabilities(OgaEngineCapabilities* capabilities);
 
+OgaResult* CreateNonGenerativeSession(const OgaConfig* config, OgaNonGenerativeSession** out);
+void DestroyNonGenerativeSession(OgaNonGenerativeSession* session);
+OgaResult* NonGenerativeSessionRunJson(OgaNonGenerativeSession* session, const char* request, size_t request_length, const char** response);
+OgaResult* CreateConfigFromBuffer(const char* config_json, size_t config_json_length, OgaConfig** out);
+OgaResult* ConfigAddExternalInitializerData(OgaConfig* config, const char* filename, const void* data, size_t length);
+OgaResult* ConfigAddModelData(OgaConfig* config, const char* filename, const void* data, size_t length);
+OgaResult* ConfigSetTokenizerData(OgaConfig* config, const char* config_json, size_t config_length, const char* tokenizer_json, size_t tokenizer_length);
+OgaResult* CreateASRPostProcessor(const OgaGenerator* generator, OgaASRPostProcessor** out);
+OgaPostProcessor* ASRPostProcessorAsPostProcessor(OgaASRPostProcessor* processor);
+void DestroyPostProcessor(OgaPostProcessor* processor);
+OgaResult* PostProcessorProcessNext(OgaPostProcessor* processor);
+OgaResult* PostProcessorFinalize(OgaPostProcessor* processor);
+OgaResult* PostProcessorReset(OgaPostProcessor* processor);
+size_t ASRPostProcessorGetResultCount(const OgaASRPostProcessor* processor);
+const OgaASRPostProcessorResult* ASRPostProcessorGetResult(const OgaASRPostProcessor* processor, size_t index);
+const char* ASRPostProcessorResultGetText(const OgaASRPostProcessorResult* result);
+const OgaASRPostProcessorTimestampResult* ASRPostProcessorResultGetTimestampResult(const OgaASRPostProcessorResult* result);
+size_t ASRPostProcessorTimestampResultGetWordCount(const OgaASRPostProcessorTimestampResult* timestamps);
+size_t ASRPostProcessorTimestampResultGetSegmentCount(const OgaASRPostProcessorTimestampResult* timestamps);
+const OgaASRPostProcessorTimestampRecord* ASRPostProcessorTimestampResultGetTimestampRecord(const OgaASRPostProcessorTimestampResult* timestamps, OgaTimestampRecordKind kind, size_t index);
+const char* ASRPostProcessorTimestampRecordGetText(const OgaASRPostProcessorTimestampRecord* record);
+int64_t ASRPostProcessorTimestampRecordGetStartFrame(const OgaASRPostProcessorTimestampRecord* record);
+int64_t ASRPostProcessorTimestampRecordGetStopFrame(const OgaASRPostProcessorTimestampRecord* record);
+double ASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* record);
+double ASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* record);
+OgaResult* TokenizerStreamReset(OgaTokenizerStream* stream);
+OgaResult* TurnOptionsSetDelimitedGuidance(OgaTurnOptions* options, int32_t opening_token, int32_t closing_token, const char* grammar);
+
 
 void OgaShutdown(void);
 void OgaSetTelemetryEnabled(bool enabled);

@@ -87,6 +87,17 @@ typedef struct OgaRequestOptions OgaRequestOptions;
 typedef struct OgaTurnOptions OgaTurnOptions;
 typedef struct OgaTurnUsage OgaTurnUsage;
 typedef struct OgaStreamingProcessor OgaStreamingProcessor;
+typedef struct OgaNonGenerativeSession OgaNonGenerativeSession;
+typedef struct OgaPostProcessor OgaPostProcessor;
+typedef struct OgaASRPostProcessor OgaASRPostProcessor;
+typedef struct OgaASRPostProcessorResult OgaASRPostProcessorResult;
+typedef struct OgaASRPostProcessorTimestampResult OgaASRPostProcessorTimestampResult;
+typedef struct OgaASRPostProcessorTimestampRecord OgaASRPostProcessorTimestampRecord;
+
+typedef enum OgaTimestampRecordKind {
+  OgaTimestampRecordKind_Words,
+  OgaTimestampRecordKind_Segments
+} OgaTimestampRecordKind;
 
 /**
  * \brief Reason why an Engine Request's generation turn stopped.
@@ -1709,6 +1720,41 @@ OGA_EXPORT OgaResult* OGA_API_CALL OgaStreamingProcessorSetOption(OgaStreamingPr
  * \return OgaResult on error, nullptr on success.
  */
 OGA_EXPORT OgaResult* OGA_API_CALL OgaStreamingProcessorGetOption(const OgaStreamingProcessor* processor, const char* key, const char** value);
+
+// Non-generative sessions for ranking and decision models.
+OGA_EXPORT OgaResult* OGA_API_CALL OgaCreateNonGenerativeSession(const OgaConfig* config, OgaNonGenerativeSession** out);
+OGA_EXPORT void OGA_API_CALL OgaDestroyNonGenerativeSession(OgaNonGenerativeSession* session);
+OGA_EXPORT OgaResult* OGA_API_CALL OgaNonGenerativeSessionRunJson(OgaNonGenerativeSession* session, const char* request, size_t request_length, const char** response);
+
+// In-memory configs currently support flat CPU text and translation models. Graph and external
+// initializer buffers must remain unchanged through the lifetime of the model and its sessions.
+OGA_EXPORT OgaResult* OGA_API_CALL OgaCreateConfigFromBuffer(const char* config_json, size_t config_json_length, OgaConfig** out);
+OGA_EXPORT OgaResult* OGA_API_CALL OgaConfigAddExternalInitializerData(OgaConfig* config, const char* filename, const void* data, size_t length);
+// Tokenizer JSON is copied by this call.
+OGA_EXPORT OgaResult* OGA_API_CALL OgaConfigSetTokenizerData(OgaConfig* config, const char* config_json, size_t config_length, const char* tokenizer_json, size_t tokenizer_length);
+
+// ASR post-processing results are borrowed until the processor is mutated or destroyed.
+OGA_EXPORT OgaResult* OGA_API_CALL OgaCreateASRPostProcessor(const OgaGenerator* generator, OgaASRPostProcessor** out);
+OGA_EXPORT OgaPostProcessor* OGA_API_CALL OgaASRPostProcessorAsPostProcessor(OgaASRPostProcessor* processor);
+OGA_EXPORT void OGA_API_CALL OgaDestroyPostProcessor(OgaPostProcessor* processor);
+OGA_EXPORT OgaResult* OGA_API_CALL OgaPostProcessorProcessNext(OgaPostProcessor* processor);
+OGA_EXPORT OgaResult* OGA_API_CALL OgaPostProcessorFinalize(OgaPostProcessor* processor);
+OGA_EXPORT OgaResult* OGA_API_CALL OgaPostProcessorReset(OgaPostProcessor* processor);
+OGA_EXPORT size_t OGA_API_CALL OgaASRPostProcessorGetResultCount(const OgaASRPostProcessor* processor);
+OGA_EXPORT const OgaASRPostProcessorResult* OGA_API_CALL OgaASRPostProcessorGetResult(const OgaASRPostProcessor* processor, size_t index);
+OGA_EXPORT const char* OGA_API_CALL OgaASRPostProcessorResultGetText(const OgaASRPostProcessorResult* result);
+OGA_EXPORT const OgaASRPostProcessorTimestampResult* OGA_API_CALL OgaASRPostProcessorResultGetTimestampResult(const OgaASRPostProcessorResult* result);
+OGA_EXPORT size_t OGA_API_CALL OgaASRPostProcessorTimestampResultGetWordCount(const OgaASRPostProcessorTimestampResult* timestamps);
+OGA_EXPORT size_t OGA_API_CALL OgaASRPostProcessorTimestampResultGetSegmentCount(const OgaASRPostProcessorTimestampResult* timestamps);
+OGA_EXPORT const OgaASRPostProcessorTimestampRecord* OGA_API_CALL OgaASRPostProcessorTimestampResultGetTimestampRecord(const OgaASRPostProcessorTimestampResult* timestamps, OgaTimestampRecordKind kind, size_t index);
+OGA_EXPORT const char* OGA_API_CALL OgaASRPostProcessorTimestampRecordGetText(const OgaASRPostProcessorTimestampRecord* record);
+OGA_EXPORT int64_t OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStartFrame(const OgaASRPostProcessorTimestampRecord* record);
+OGA_EXPORT int64_t OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStopFrame(const OgaASRPostProcessorTimestampRecord* record);
+OGA_EXPORT double OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* record);
+OGA_EXPORT double OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* record);
+
+OGA_EXPORT OgaResult* OGA_API_CALL OgaTokenizerStreamReset(OgaTokenizerStream* stream);
+OGA_EXPORT OgaResult* OGA_API_CALL OgaTurnOptionsSetDelimitedGuidance(OgaTurnOptions* options, int32_t opening_token, int32_t closing_token, const char* grammar);
 
 #ifdef __cplusplus
 }

@@ -380,3 +380,155 @@ func (g *Generator) Destroy() {
 		g.model = nil
 	}
 }
+
+// ASRPostProcessor incrementally converts generator output into text and timestamps.
+// The associated Generator must remain alive until the processor is destroyed.
+type ASRPostProcessor struct {
+	ptr              *C.OgaASRPostProcessor
+	base             *C.OgaPostProcessor
+	generator        *Generator
+	sessionGenerator *generator
+}
+
+type ASRTimestamp struct {
+	Text       string
+	StartFrame int64
+	StopFrame  int64
+	StartTime  float64
+	StopTime   float64
+}
+
+type ASRResult struct {
+	Text     string
+	Words    []ASRTimestamp
+	Segments []ASRTimestamp
+}
+
+// NewASRPostProcessor creates an ASR post-processor for this generator.
+func (g *Generator) NewASRPostProcessor() (*ASRPostProcessor, error) {
+	if err := g.check(); err != nil {
+		return nil, err
+	}
+	return newASRPostProcessor(g.ptr, g, nil)
+}
+
+// newASRPostProcessor bridges the session's internal generator to the same
+// native post-processor used by the public Generator API.
+func (g *generator) newASRPostProcessor() (*ASRPostProcessor, error) {
+	if g == nil || g.generatorPtr == nil {
+		return nil, errors.New("generator is destroyed")
+	}
+	return newASRPostProcessor(g.generatorPtr, nil, g)
+}
+
+func newASRPostProcessor(nativeGenerator *C.OgaGenerator, publicGenerator *Generator, sessionGenerator *generator) (*ASRPostProcessor, error) {
+	var ptr *C.OgaASRPostProcessor
+	if err := OgaResultToError(C.CreateASRPostProcessor(nativeGenerator, &ptr)); err != nil {
+		return nil, fmt.Errorf("creating ASR post-processor: %w", err)
+	}
+	if ptr == nil {
+		return nil, errors.New("ASR post-processor creation returned nil without error")
+	}
+	base := C.ASRPostProcessorAsPostProcessor(ptr)
+	if base == nil {
+		return nil, errors.New("ASR post-processor base view returned nil")
+	}
+	return &ASRPostProcessor{ptr: ptr, base: base, generator: publicGenerator, sessionGenerator: sessionGenerator}, nil
+}
+
+func (p *ASRPostProcessor) check() error {
+	if p == nil || p.ptr == nil || p.base == nil ||
+		(p.generator == nil && p.sessionGenerator == nil) ||
+		(p.generator != nil && p.generator.ptr == nil) ||
+		(p.sessionGenerator != nil && p.sessionGenerator.generatorPtr == nil) {
+		return errors.New("ASR post-processor is destroyed")
+	}
+	return nil
+}
+
+// ProcessNext consumes the generator's current output and records any completed results.
+func (p *ASRPostProcessor) ProcessNext() error {
+	if err := p.check(); err != nil {
+		return err
+	}
+	if err := OgaResultToError(C.PostProcessorProcessNext(p.base)); err != nil {
+		return fmt.Errorf("processing ASR output: %w", err)
+	}
+	return nil
+}
+
+// Finalize flushes any partial result from the processor.
+func (p *ASRPostProcessor) Finalize() error {
+	if err := p.check(); err != nil {
+		return err
+	}
+	if err := OgaResultToError(C.PostProcessorFinalize(p.base)); err != nil {
+		return fmt.Errorf("finalizing ASR output: %w", err)
+	}
+	return nil
+}
+
+// Reset clears accumulated processor state.
+func (p *ASRPostProcessor) Reset() error {
+	if err := p.check(); err != nil {
+		return err
+	}
+	if err := OgaResultToError(C.PostProcessorReset(p.base)); err != nil {
+		return fmt.Errorf("resetting ASR post-processor: %w", err)
+	}
+	return nil
+}
+
+// Results copies all currently available text and word/segment timestamps.
+func (p *ASRPostProcessor) Results() ([]ASRResult, error) {
+	if err := p.check(); err != nil {
+		return nil, err
+	}
+	count := int(C.ASRPostProcessorGetResultCount(p.ptr))
+	results := make([]ASRResult, count)
+	for i := range results {
+		result := C.ASRPostProcessorGetResult(p.ptr, C.size_t(i))
+		if result == nil {
+			return nil, fmt.Errorf("ASR result %d is nil", i)
+		}
+		if text := C.ASRPostProcessorResultGetText(result); text != nil {
+			results[i].Text = C.GoString(text)
+		}
+		timestamps := C.ASRPostProcessorResultGetTimestampResult(result)
+		if timestamps == nil {
+			continue
+		}
+		results[i].Words = copyASRTimestamps(timestamps, C.OgaTimestampRecordKind_Words, C.ASRPostProcessorTimestampResultGetWordCount(timestamps))
+		results[i].Segments = copyASRTimestamps(timestamps, C.OgaTimestampRecordKind_Segments, C.ASRPostProcessorTimestampResultGetSegmentCount(timestamps))
+	}
+	return results, nil
+}
+
+func copyASRTimestamps(timestamps *C.OgaASRPostProcessorTimestampResult, kind C.OgaTimestampRecordKind, count C.size_t) []ASRTimestamp {
+	values := make([]ASRTimestamp, int(count))
+	for i := range values {
+		record := C.ASRPostProcessorTimestampResultGetTimestampRecord(timestamps, kind, C.size_t(i))
+		if record == nil {
+			continue
+		}
+		if text := C.ASRPostProcessorTimestampRecordGetText(record); text != nil {
+			values[i].Text = C.GoString(text)
+		}
+		values[i].StartFrame = int64(C.ASRPostProcessorTimestampRecordGetStartFrame(record))
+		values[i].StopFrame = int64(C.ASRPostProcessorTimestampRecordGetStopFrame(record))
+		values[i].StartTime = float64(C.ASRPostProcessorTimestampRecordGetStartTime(record))
+		values[i].StopTime = float64(C.ASRPostProcessorTimestampRecordGetStopTime(record))
+	}
+	return values
+}
+
+// Destroy releases the processor. Destroy it before its Generator.
+func (p *ASRPostProcessor) Destroy() {
+	if p != nil && p.base != nil {
+		C.DestroyPostProcessor(p.base)
+		p.ptr = nil
+		p.base = nil
+		p.generator = nil
+		p.sessionGenerator = nil
+	}
+}

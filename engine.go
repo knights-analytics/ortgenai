@@ -346,6 +346,19 @@ func (o *TurnOptions) SetGuidance(kind GuidanceType, data string) error {
 	defer C.free(unsafe.Pointer(d))
 	return o.setResult("setting guidance", C.TurnOptionsSetGuidance(o.ptr, t, d))
 }
+
+// SetDelimitedGuidance constrains generated text between two existing token IDs.
+func (o *TurnOptions) SetDelimitedGuidance(openingToken, closingToken int32, grammar string) error {
+	if err := o.check(); err != nil {
+		return err
+	}
+	if grammar == "" {
+		return errors.New("delimited guidance grammar is empty")
+	}
+	cGrammar := C.CString(grammar)
+	defer C.free(unsafe.Pointer(cGrammar))
+	return o.setResult("setting delimited guidance", C.TurnOptionsSetDelimitedGuidance(o.ptr, C.int32_t(openingToken), C.int32_t(closingToken), cGrammar))
+}
 func (o *TurnOptions) ClearGuidance() error {
 	if err := o.check(); err != nil {
 		return err

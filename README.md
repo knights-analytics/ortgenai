@@ -36,7 +36,7 @@ Note: This implementation is still alpha so the API may change in future release
 - Go 1.27+
 - Linux with glibc, or 64-bit Windows
 - ONNX Runtime GenAI shared library and dependencies available at runtime:
-  - ORT GenAI `0.17.0` or newer with the explicit engine/request API
+  - ORT GenAI `0.19.0` or newer with the explicit engine/request API
   - Linux: `libonnxruntime-genai.so` and `libonnxruntime.so`
   - Windows: `onnxruntime-genai.dll` and `onnxruntime.dll`
 - A local model directory compatible with ONNX Runtime GenAI (e.g., a converted `Phi-3.5` model folder)
@@ -152,6 +152,10 @@ session, err := genai.CreateSessionWithOptions(
 ### Batched generation
 
 `Session.Generate` accepts multiple conversations in one call: `[][]Message`. The returned channel carries `SequenceDelta` items, each labeled with the `Sequence` index so you can route output per-conversation.
+
+### Generative ASR with timestamps
+
+`Session.GenerateASR` runs audio conversations through a generative ASR model and returns copied text, word timestamps, and segment timestamps. Supply the audio and the model-specific prompt in each `MultimodalConversation`; results are labeled with the conversation index and emitted as each conversation completes. Keep the conversations, media, and session alive and unchanged until the result and error channels close.
 
 ### Explicit engine turns
 

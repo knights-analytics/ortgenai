@@ -399,6 +399,18 @@ func InitializeGenAiLibrary() error {
 		"OgaEngineGetCapabilities", "OgaEngineCapabilitiesGetConfiguredMaxBatchSize",
 		"OgaEngineCapabilitiesGetMaxScheduledTokens", "OgaEngineCapabilitiesGetMaxRequestLength",
 		"OgaDestroyEngineCapabilities",
+		"OgaCreateNonGenerativeSession", "OgaDestroyNonGenerativeSession", "OgaNonGenerativeSessionRunJson",
+		"OgaCreateConfigFromBuffer", "OgaConfigAddExternalInitializerData", "OgaConfigSetTokenizerData",
+		"OgaCreateASRPostProcessor", "OgaASRPostProcessorAsPostProcessor", "OgaDestroyPostProcessor",
+		"OgaPostProcessorProcessNext", "OgaPostProcessorFinalize", "OgaPostProcessorReset",
+		"OgaASRPostProcessorGetResultCount", "OgaASRPostProcessorGetResult",
+		"OgaASRPostProcessorResultGetText", "OgaASRPostProcessorResultGetTimestampResult",
+		"OgaASRPostProcessorTimestampResultGetWordCount", "OgaASRPostProcessorTimestampResultGetSegmentCount",
+		"OgaASRPostProcessorTimestampResultGetTimestampRecord", "OgaASRPostProcessorTimestampRecordGetText",
+		"OgaASRPostProcessorTimestampRecordGetStartFrame", "OgaASRPostProcessorTimestampRecordGetStopFrame",
+		"OgaASRPostProcessorTimestampRecordGetStartTime", "OgaASRPostProcessorTimestampRecordGetStopTime",
+		"OgaTokenizerStreamReset", "OgaTurnOptionsSetDelimitedGuidance",
+		"OgaConfigAddModelData",
 	}
 	engineSymbols := make([]unsafe.Pointer, 0, len(engineSymbolNames))
 	for _, symbolName := range engineSymbolNames {

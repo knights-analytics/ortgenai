@@ -266,6 +266,14 @@ func (s *TokenizerStream) Decode(token int32) (string, error) {
 	return C.GoString(output), nil
 }
 
+// Reset clears incremental decoder state so the stream can decode a new sequence.
+func (s *TokenizerStream) Reset() error {
+	if s == nil || s.ptr == nil {
+		return errors.New("tokenizer stream is destroyed")
+	}
+	return OgaResultToError(C.TokenizerStreamReset(s.ptr))
+}
+
 // Destroy releases the native incremental decoder.
 func (s *TokenizerStream) Destroy() {
 	if s != nil && s.ptr != nil {

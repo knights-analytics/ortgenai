@@ -249,7 +249,7 @@ func (m *model) destroy() {
 }
 
 type Session struct {
-	modelPath         string   // path used to load the model (retained for MTP generation)
+	modelPath         string // path used to load the model (retained for MTP generation)
 	model             *model
 	processor         *multiModalProcessor
 	tokenizer         *tokenizer
@@ -257,6 +257,7 @@ type Session struct {
 	activeAdapters    *Adapters
 	activeAdapterName string
 	mutex             sync.Mutex // the C API is not thread-safe
+	nativeBuffers     []unsafe.Pointer
 }
 
 type MaxLengthReachedError struct{}
@@ -289,6 +290,16 @@ func (s *Session) GetStatistics() *Statistics {
 
 func (g *generator) IsDone() bool {
 	return bool(C.IsDone(g.generatorPtr))
+}
+
+func (g *generator) generateNextToken() error {
+	if g == nil || g.generatorPtr == nil {
+		return errors.New("generator is destroyed")
+	}
+	if err := OgaResultToError(C.GeneratorGenerateNextToken(g.generatorPtr)); err != nil {
+		return fmt.Errorf("generating next token: %w", err)
+	}
+	return nil
 }
 
 func (t *tokenizer) ApplyChatTemplate(inputMessages []byte, tools []byte, addGenerationPrompt bool) (string, error) {
@@ -981,6 +992,10 @@ func (s *Session) Destroy() {
 		s.processor.destroy()
 		s.processor = nil
 	}
+	for _, buffer := range s.nativeBuffers {
+		C.free(buffer)
+	}
+	s.nativeBuffers = nil
 }
 
 // CreateSessionWithOptions builds a GenAI config from a config directory,
@@ -1102,5 +1117,174 @@ func CreateSession(modelPath string) (*Session, error) {
 		tokenizer:  &tokenizer,
 		statistics: &Statistics{},
 	}
+	return session, nil
+}
+
+// NonGenerativeSession runs ranking or decision models that accept and return JSON.
+type NonGenerativeSession struct {
+	ptr   *C.OgaNonGenerativeSession
+	mutex sync.Mutex
+}
+
+// CreateNonGenerativeSession creates a non-generative session from a model config directory.
+func CreateNonGenerativeSession(configDirectory string) (*NonGenerativeSession, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+	path := C.CString(configDirectory)
+	defer C.free(unsafe.Pointer(path))
+	var config *C.OgaConfig
+	if err := OgaResultToError(C.CreateOgaConfig(path, &config)); err != nil {
+		return nil, fmt.Errorf("creating non-generative config: %w", err)
+	}
+	if config == nil {
+		return nil, errors.New("non-generative config creation returned nil without error")
+	}
+	defer C.DestroyOgaConfig(config)
+	var ptr *C.OgaNonGenerativeSession
+	if err := OgaResultToError(C.CreateNonGenerativeSession(config, &ptr)); err != nil {
+		return nil, fmt.Errorf("creating non-generative session: %w", err)
+	}
+	if ptr == nil {
+		return nil, errors.New("non-generative session creation returned nil without error")
+	}
+	return &NonGenerativeSession{ptr: ptr}, nil
+}
+
+// RunJSON sends one JSON request and returns the copied JSON response.
+func (s *NonGenerativeSession) RunJSON(request []byte) (string, error) {
+	if s == nil {
+		return "", errors.New("non-generative session is destroyed")
+	}
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	if s.ptr == nil {
+		return "", errors.New("non-generative session is destroyed")
+	}
+	if len(request) == 0 {
+		return "", errors.New("non-generative request is empty")
+	}
+	input := C.CBytes(request)
+	defer C.free(input)
+	var output *C.char
+	if err := OgaResultToError(C.NonGenerativeSessionRunJson(s.ptr, (*C.char)(input), C.size_t(len(request)), (**C.char)(unsafe.Pointer(&output)))); err != nil {
+		if output != nil {
+			C.DestroyOgaString(output)
+		}
+		return "", fmt.Errorf("running non-generative request: %w", err)
+	}
+	if output == nil {
+		return "", errors.New("non-generative session returned a nil response")
+	}
+	response := C.GoString(output)
+	C.DestroyOgaString(output)
+	return response, nil
+}
+
+// Destroy releases the native session.
+func (s *NonGenerativeSession) Destroy() {
+	if s != nil {
+		s.mutex.Lock()
+		defer s.mutex.Unlock()
+	}
+	if s != nil && s.ptr != nil {
+		C.DestroyNonGenerativeSession(s.ptr)
+		s.ptr = nil
+	}
+}
+
+// CreateSessionFromMemory builds a CPU text session from in-memory GenAI config and ONNX files.
+// ONNX graph and external initializer bytes are copied into C memory and kept alive until Session.Destroy.
+func CreateSessionFromMemory(configJSON []byte, modelData, externalInitializerData map[string][]byte, tokenizerConfigJSON, tokenizerJSON []byte) (*Session, error) {
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+	if len(configJSON) == 0 {
+		return nil, errors.New("in-memory model config is empty")
+	}
+	configBytes := C.CBytes(configJSON)
+	defer C.free(configBytes)
+	var config *C.OgaConfig
+	if err := OgaResultToError(C.CreateConfigFromBuffer((*C.char)(configBytes), C.size_t(len(configJSON)), &config)); err != nil {
+		return nil, fmt.Errorf("creating in-memory model config: %w", err)
+	}
+	if config == nil {
+		return nil, errors.New("in-memory model config creation returned nil without error")
+	}
+	defer C.DestroyOgaConfig(config)
+
+	var buffers []unsafe.Pointer
+	freeBuffers := func() {
+		for _, buffer := range buffers {
+			C.free(buffer)
+		}
+		buffers = nil
+	}
+	defer func() {
+		if buffers != nil {
+			freeBuffers()
+		}
+	}()
+	addData := func(filename string, data []byte, external bool) error {
+		if filename == "" || len(data) == 0 {
+			return errors.New("model data filename and bytes are required")
+		}
+		cFilename := C.CString(filename)
+		defer C.free(unsafe.Pointer(cFilename))
+		dataPtr := C.CBytes(data)
+		var result *C.OgaResult
+		if external {
+			result = C.ConfigAddExternalInitializerData(config, cFilename, dataPtr, C.size_t(len(data)))
+		} else {
+			result = C.ConfigAddModelData(config, cFilename, dataPtr, C.size_t(len(data)))
+		}
+		if err := OgaResultToError(result); err != nil {
+			C.free(dataPtr)
+			return err
+		}
+		buffers = append(buffers, dataPtr)
+		return nil
+	}
+	for filename, data := range modelData {
+		if err := addData(filename, data, false); err != nil {
+			return nil, fmt.Errorf("registering model file %q: %w", filename, err)
+		}
+	}
+	for filename, data := range externalInitializerData {
+		if err := addData(filename, data, true); err != nil {
+			return nil, fmt.Errorf("registering external initializer %q: %w", filename, err)
+		}
+	}
+	if len(tokenizerConfigJSON) != 0 || len(tokenizerJSON) != 0 {
+		if len(tokenizerConfigJSON) == 0 || len(tokenizerJSON) == 0 {
+			return nil, errors.New("both tokenizer config JSON and tokenizer JSON are required")
+		}
+		tokenizerConfig := C.CBytes(tokenizerConfigJSON)
+		tokenizerData := C.CBytes(tokenizerJSON)
+		result := C.ConfigSetTokenizerData(config, (*C.char)(tokenizerConfig), C.size_t(len(tokenizerConfigJSON)), (*C.char)(tokenizerData), C.size_t(len(tokenizerJSON)))
+		C.free(tokenizerConfig)
+		C.free(tokenizerData)
+		if err := OgaResultToError(result); err != nil {
+			return nil, fmt.Errorf("registering tokenizer JSON: %w", err)
+		}
+	}
+	var nativeModel *C.OgaModel
+	if err := OgaResultToError(C.CreateOgaModelFromConfig(config, &nativeModel)); err != nil {
+		if nativeModel != nil {
+			C.DestroyOgaModel(nativeModel)
+		}
+		return nil, fmt.Errorf("creating in-memory model: %w", err)
+	}
+	if nativeModel == nil {
+		return nil, errors.New("in-memory model creation returned nil without error")
+	}
+	model := &model{modelPtr: nativeModel}
+	tokenizer, err := newTokenizerFromModel(*model)
+	if err != nil {
+		model.destroy()
+		return nil, fmt.Errorf("creating in-memory model tokenizer: %w", err)
+	}
+	session := &Session{model: model, tokenizer: &tokenizer, statistics: &Statistics{}, nativeBuffers: buffers}
+	buffers = nil
 	return session, nil
 }
