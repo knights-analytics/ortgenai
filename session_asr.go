@@ -57,6 +57,10 @@ func (s *Session) GenerateASR(ctx context.Context, conversations []MultimodalCon
 			guidance := *generationOptions.Guidance
 			opts.Guidance = &guidance
 		}
+		if generationOptions.EnableThinking != nil {
+			enableThinking := *generationOptions.EnableThinking
+			opts.EnableThinking = &enableThinking
+		}
 		if opts.MaxLength <= 0 {
 			opts.MaxLength = defaultMaxLength
 		}
@@ -71,6 +75,11 @@ func (s *Session) GenerateASR(ctx context.Context, conversations []MultimodalCon
 		defer close(errChan)
 		s.mutex.Lock()
 		defer s.mutex.Unlock()
+		chatTokenizer, tokenizerErr := s.tokenizerForGeneration(opts.EnableThinking)
+		if tokenizerErr != nil {
+			sendGenerationError(errChan, tokenizerErr)
+			return
+		}
 
 		for i, conv := range conversations {
 			select {
@@ -79,7 +88,7 @@ func (s *Session) GenerateASR(ctx context.Context, conversations []MultimodalCon
 			default:
 			}
 
-			results, err := s.runASRConversation(ctx, conv, &opts)
+			results, err := s.runASRConversation(chatTokenizer, ctx, conv, &opts)
 			if err != nil {
 				if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 					sendGenerationError(errChan, err)
@@ -98,8 +107,8 @@ func (s *Session) GenerateASR(ctx context.Context, conversations []MultimodalCon
 
 // runASRConversation sets up audio inputs and drives one generator. The caller
 // holds the session mutex for the full run.
-func (s *Session) runASRConversation(ctx context.Context, conv MultimodalConversation, generationOptions *GenerationOptions) ([]ASRResult, error) {
-	if s.tokenizer == nil || s.tokenizer.tokenizerPtr == nil || s.model == nil || s.model.modelPtr == nil {
+func (s *Session) runASRConversation(chatTokenizer *tokenizer, ctx context.Context, conv MultimodalConversation, generationOptions *GenerationOptions) ([]ASRResult, error) {
+	if chatTokenizer == nil || chatTokenizer.tokenizerPtr == nil || s.model == nil || s.model.modelPtr == nil {
 		return nil, errors.New("session is destroyed")
 	}
 
@@ -107,7 +116,7 @@ func (s *Session) runASRConversation(ctx context.Context, conv MultimodalConvers
 	if err != nil {
 		return nil, fmt.Errorf("marshaling ASR messages: %w", err)
 	}
-	prompt, err := s.tokenizer.ApplyChatTemplate(messageJSON, []byte("[]"), true)
+	prompt, err := chatTokenizer.ApplyChatTemplate(messageJSON, []byte("[]"), true)
 	if err != nil {
 		return nil, fmt.Errorf("applying ASR chat template: %w", err)
 	}

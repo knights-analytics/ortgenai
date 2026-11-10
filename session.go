@@ -81,12 +81,17 @@ type Guidance struct {
 }
 
 type GenerationOptions struct {
+	// MaxLength is the maximum sequence length for this generation call.
+	// Values less than or equal to zero use the package default.
 	MaxLength   int
 	BatchSize   int
 	Temperature *float64
 	TopP        *float64
 	Seed        *int
 	Guidance    *Guidance
+	// EnableThinking controls the chat template's enable_thinking argument.
+	// A nil value leaves the model's default behavior unchanged.
+	EnableThinking *bool
 }
 
 var defaultMaxLength = 2024
@@ -249,15 +254,58 @@ func (m *model) destroy() {
 }
 
 type Session struct {
-	modelPath         string // path used to load the model (retained for MTP generation)
-	model             *model
-	processor         *multiModalProcessor
-	tokenizer         *tokenizer
-	statistics        *Statistics
-	activeAdapters    *Adapters
-	activeAdapterName string
-	mutex             sync.Mutex // the C API is not thread-safe
-	nativeBuffers     []unsafe.Pointer
+	modelPath          string // path used to load the model (retained for MTP generation)
+	model              *model
+	processor          *multiModalProcessor
+	tokenizer          *tokenizer
+	thinkingTokenizers map[bool]*tokenizer
+	statistics         *Statistics
+	activeAdapters     *Adapters
+	activeAdapterName  string
+	mutex              sync.Mutex // the C API is not thread-safe
+	nativeBuffers      []unsafe.Pointer
+}
+
+// tokenizerForGeneration selects a session-owned tokenizer configured for the
+// requested chat-template thinking behavior. Callers must hold s.mutex because
+// tokenizer creation and option updates use the native API.
+func (s *Session) tokenizerForGeneration(enableThinking *bool) (*tokenizer, error) {
+	if s.tokenizer == nil || s.tokenizer.tokenizerPtr == nil {
+		return nil, errors.New("session is destroyed")
+	}
+	if enableThinking == nil {
+		return s.tokenizer, nil
+	}
+	if s.thinkingTokenizers != nil {
+		if t := s.thinkingTokenizers[*enableThinking]; t != nil {
+			return t, nil
+		}
+	}
+	if s.model == nil || s.model.modelPtr == nil {
+		return nil, errors.New("session is destroyed")
+	}
+
+	t, err := newTokenizerFromModel(*s.model)
+	if err != nil {
+		return nil, fmt.Errorf("creating tokenizer for thinking option: %w", err)
+	}
+	kwargs, err := json.Marshal(map[string]bool{"enable_thinking": *enableThinking})
+	if err != nil {
+		t.destroy()
+		return nil, fmt.Errorf("marshaling chat template options: %w", err)
+	}
+	// UpdateOptions is exposed on the standalone Tokenizer wrapper. This
+	// temporary wrapper only borrows t's native handle; it does not own it.
+	borrowed := &Tokenizer{tokenizerPtr: t.tokenizerPtr}
+	if err := borrowed.UpdateOptions(map[string]string{"chat_template_kwargs": string(kwargs)}); err != nil {
+		t.destroy()
+		return nil, fmt.Errorf("setting chat template options: %w", err)
+	}
+	if s.thinkingTokenizers == nil {
+		s.thinkingTokenizers = make(map[bool]*tokenizer, 2)
+	}
+	s.thinkingTokenizers[*enableThinking] = &t
+	return &t, nil
 }
 
 type MaxLengthReachedError struct{}
@@ -637,11 +685,6 @@ func setDefaultGenerationOptions(generationOptions *GenerationOptions) {
 
 func (s *Session) Generate(ctx context.Context, messages [][]Message, tools []string, generationOptions *GenerationOptions) (<-chan SequenceDelta, <-chan error, error) {
 	s.mutex.Lock()
-	sequences, tokenizerStreams, tokenizeErr := s.tokenizer.tokenizeMessages(messages, tools)
-	if tokenizeErr != nil {
-		s.mutex.Unlock()
-		return nil, nil, fmt.Errorf("TokenizeMessages failed: %w", tokenizeErr)
-	}
 	if generationOptions == nil {
 		generationOptions = &GenerationOptions{
 			MaxLength: defaultMaxLength,
@@ -651,7 +694,20 @@ func (s *Session) Generate(ctx context.Context, messages [][]Message, tools []st
 	if generationOptions.BatchSize <= 0 {
 		generationOptions.BatchSize = len(messages)
 	}
+	if generationOptions.MaxLength <= 0 {
+		generationOptions.MaxLength = defaultMaxLength
+	}
 	setDefaultGenerationOptions(generationOptions)
+	chatTokenizer, tokenizerErr := s.tokenizerForGeneration(generationOptions.EnableThinking)
+	if tokenizerErr != nil {
+		s.mutex.Unlock()
+		return nil, nil, tokenizerErr
+	}
+	sequences, tokenizerStreams, tokenizeErr := chatTokenizer.tokenizeMessages(messages, tools)
+	if tokenizeErr != nil {
+		s.mutex.Unlock()
+		return nil, nil, fmt.Errorf("TokenizeMessages failed: %w", tokenizeErr)
+	}
 
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
@@ -686,6 +742,16 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		s.mutex.Unlock()
 		return nil, nil, errors.New("GenerateWithImages currently supports only a single message set")
 	}
+	if generationOptions == nil {
+		generationOptions = &GenerationOptions{MaxLength: defaultMaxLength}
+	}
+	if generationOptions.BatchSize != len(messages) {
+		generationOptions.BatchSize = len(messages)
+	}
+	if generationOptions.MaxLength <= 0 {
+		generationOptions.MaxLength = defaultMaxLength
+	}
+	setDefaultGenerationOptions(generationOptions)
 
 	// Build prompt from chat template using messages[0]
 	msgJSON, err := json.Marshal(messages[0])
@@ -703,7 +769,12 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		return nil, nil, fmt.Errorf("failed to marshal tools: %w", err)
 	}
 
-	prompt, templateErr := s.tokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
+	chatTokenizer, tokenizerErr := s.tokenizerForGeneration(generationOptions.EnableThinking)
+	if tokenizerErr != nil {
+		s.mutex.Unlock()
+		return nil, nil, tokenizerErr
+	}
+	prompt, templateErr := chatTokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
 	if templateErr != nil {
 		s.mutex.Unlock()
 		return nil, nil, fmt.Errorf("failed to apply chat template: %w", templateErr)
@@ -725,14 +796,6 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 		return nil, nil, fmt.Errorf("ProcessImages failed: %w", err)
 	}
 
-	if generationOptions == nil {
-		generationOptions = &GenerationOptions{MaxLength: defaultMaxLength}
-	}
-	if generationOptions.BatchSize != len(messages) {
-		generationOptions.BatchSize = len(messages)
-	}
-	setDefaultGenerationOptions(generationOptions)
-
 	generator, err := s.createGenerator(generationOptions)
 	if err != nil {
 		s.mutex.Unlock()
@@ -750,7 +813,7 @@ func (s *Session) GenerateWithImages(ctx context.Context, messages [][]Message, 
 	numSeq := generationOptions.BatchSize
 	tokenizerStreams := make([]*tokenizerStream, 0, numSeq)
 	for range numSeq {
-		ts, err := s.tokenizer.createTokenizerStream()
+		ts, err := chatTokenizer.createTokenizerStream()
 		if err != nil {
 			for _, t := range tokenizerStreams {
 				if t != nil {
@@ -843,6 +906,14 @@ func (s *Session) GenerateMultimodal(ctx context.Context, conversations []Multim
 	if generationOptions.BatchSize <= 0 {
 		generationOptions.BatchSize = 1
 	}
+	if generationOptions.MaxLength <= 0 {
+		generationOptions.MaxLength = defaultMaxLength
+	}
+	var enableThinking *bool
+	if generationOptions.EnableThinking != nil {
+		value := *generationOptions.EnableThinking
+		enableThinking = &value
+	}
 	maxLength := generationOptions.MaxLength
 
 	rawTools := make([]json.RawMessage, len(tools))
@@ -861,6 +932,11 @@ func (s *Session) GenerateMultimodal(ctx context.Context, conversations []Multim
 		defer s.mutex.Unlock()
 		defer close(outputChan)
 		defer close(errChan)
+		chatTokenizer, tokenizerErr := s.tokenizerForGeneration(enableThinking)
+		if tokenizerErr != nil {
+			sendGenerationError(errChan, tokenizerErr)
+			return
+		}
 		// Destroy in reverse creation order; destroy() is idempotent.
 		var runs []*multimodalRun
 		defer func() {
@@ -874,7 +950,7 @@ func (s *Session) GenerateMultimodal(ctx context.Context, conversations []Multim
 				return
 			default:
 			}
-			run, setupErr := s.setupMultimodalRun(conversations[i], toolsJSON, generationOptions)
+			run, setupErr := s.setupMultimodalRun(chatTokenizer, conversations[i], toolsJSON, generationOptions)
 			if setupErr != nil {
 				sendGenerationError(errChan, setupErr)
 				return
@@ -894,8 +970,8 @@ func (s *Session) GenerateMultimodal(ctx context.Context, conversations []Multim
 // conversations the chat-templated prompt is routed through the session's
 // multimodal processor (images, audio, or both); for text-only conversations the
 // prompt is tokenized into sequences. Assumes the session mutex is held.
-func (s *Session) setupMultimodalRun(conv MultimodalConversation, toolsJSON []byte, generationOptions *GenerationOptions) (*multimodalRun, error) {
-	if s.tokenizer == nil || s.tokenizer.tokenizerPtr == nil || s.model == nil || s.model.modelPtr == nil {
+func (s *Session) setupMultimodalRun(chatTokenizer *tokenizer, conv MultimodalConversation, toolsJSON []byte, generationOptions *GenerationOptions) (*multimodalRun, error) {
+	if chatTokenizer == nil || chatTokenizer.tokenizerPtr == nil || s.model == nil || s.model.modelPtr == nil {
 		return nil, errors.New("session is destroyed")
 	}
 	run := &multimodalRun{}
@@ -913,7 +989,7 @@ func (s *Session) setupMultimodalRun(conv MultimodalConversation, toolsJSON []by
 	opts.BatchSize = 1
 
 	if !hasImages && !hasAudios {
-		sequences, streams, err := s.tokenizer.tokenizeMessages([][]Message{conv.Messages}, nil)
+		sequences, streams, err := chatTokenizer.tokenizeMessages([][]Message{conv.Messages}, nil)
 		if err != nil {
 			run.destroy()
 			return nil, fmt.Errorf("tokenizing conversation messages: %w", err)
@@ -932,7 +1008,7 @@ func (s *Session) setupMultimodalRun(conv MultimodalConversation, toolsJSON []by
 		return run, nil
 	}
 
-	prompt, templateErr := s.tokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
+	prompt, templateErr := chatTokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
 	if templateErr != nil {
 		return nil, fmt.Errorf("failed to apply chat template: %w", templateErr)
 	}
@@ -967,7 +1043,7 @@ func (s *Session) setupMultimodalRun(conv MultimodalConversation, toolsJSON []by
 		return nil, fmt.Errorf("failed to set inputs: %w", err)
 	}
 
-	stream, streamErr := s.tokenizer.createTokenizerStream()
+	stream, streamErr := chatTokenizer.createTokenizerStream()
 	if streamErr != nil {
 		run.destroy()
 		return nil, fmt.Errorf("failed to create tokenizer stream: %w", streamErr)
@@ -980,10 +1056,10 @@ func (s *Session) Destroy() {
 	if s.activeAdapters != nil {
 		s.activeAdapters.Destroy()
 	}
-	if s.model != nil {
-		s.model.destroy()
-		s.model = nil
+	for _, tokenizer := range s.thinkingTokenizers {
+		tokenizer.destroy()
 	}
+	s.thinkingTokenizers = nil
 	if s.tokenizer != nil {
 		s.tokenizer.destroy()
 		s.tokenizer = nil
@@ -991,6 +1067,10 @@ func (s *Session) Destroy() {
 	if s.processor != nil {
 		s.processor.destroy()
 		s.processor = nil
+	}
+	if s.model != nil {
+		s.model.destroy()
+		s.model = nil
 	}
 	for _, buffer := range s.nativeBuffers {
 		C.free(buffer)

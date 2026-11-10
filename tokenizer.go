@@ -182,7 +182,9 @@ func (t *Tokenizer) DecodeBatch(tokens *Tensor) ([]string, error) {
 	return decoded, nil
 }
 
-// UpdateOptions sets per-tokenizer string options, such as add_special_tokens or skip_special_tokens.
+// UpdateOptions sets per-tokenizer string options, such as add_special_tokens,
+// skip_special_tokens, or chat_template_kwargs. The latter must be a JSON
+// object whose properties are passed as keyword arguments to the chat template.
 func (t *Tokenizer) UpdateOptions(options map[string]string) error {
 	if t == nil || t.tokenizerPtr == nil {
 		return errors.New("tokenizer is destroyed")

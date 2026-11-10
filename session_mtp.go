@@ -118,6 +118,11 @@ func (s *Session) GenerateMTP(ctx context.Context, messages [][]Message, tools [
 	if generationOptions.BatchSize <= 0 {
 		generationOptions.BatchSize = 1
 	}
+	var enableThinking *bool
+	if generationOptions.EnableThinking != nil {
+		value := *generationOptions.EnableThinking
+		enableThinking = &value
+	}
 	maxLength := generationOptions.MaxLength
 	if maxLength <= 0 {
 		maxLength = defaultMaxLength
@@ -139,6 +144,11 @@ func (s *Session) GenerateMTP(ctx context.Context, messages [][]Message, tools [
 		defer s.mutex.Unlock()
 		defer close(outputChan)
 		defer close(errChan)
+		chatTokenizer, tokenizerErr := s.tokenizerForGeneration(enableThinking)
+		if tokenizerErr != nil {
+			sendGenerationError(errChan, tokenizerErr)
+			return
+		}
 
 		mtpModelPath, err := resolveMTPModelPath(s.modelPath)
 		if err != nil {
@@ -160,7 +170,7 @@ func (s *Session) GenerateMTP(ctx context.Context, messages [][]Message, tools [
 				return
 			default:
 			}
-			run, setupErr := s.setupMTPRun(messages[i], toolsJSON, mtpModelPath, maxLength)
+			run, setupErr := s.setupMTPRun(chatTokenizer, messages[i], toolsJSON, mtpModelPath, maxLength)
 			if setupErr != nil {
 				sendGenerationError(errChan, setupErr)
 				return
@@ -181,8 +191,8 @@ func (s *Session) GenerateMTP(ctx context.Context, messages [][]Message, tools [
 // pinned MTP API requires both model paths at construction time and loads
 // its own handles), mirroring the multimodalRun model of one native
 // generator per conversation. Assumes the session mutex is held.
-func (s *Session) setupMTPRun(conv []Message, toolsJSON []byte, mtpModelPath string, maxLength int) (*mtpRun, error) {
-	if s.tokenizer == nil || s.tokenizer.tokenizerPtr == nil || s.model == nil || s.model.modelPtr == nil {
+func (s *Session) setupMTPRun(chatTokenizer *tokenizer, conv []Message, toolsJSON []byte, mtpModelPath string, maxLength int) (*mtpRun, error) {
+	if chatTokenizer == nil || chatTokenizer.tokenizerPtr == nil || s.model == nil || s.model.modelPtr == nil {
 		return nil, errors.New("session is destroyed")
 	}
 	run := &mtpRun{}
@@ -192,7 +202,7 @@ func (s *Session) setupMTPRun(conv []Message, toolsJSON []byte, mtpModelPath str
 		run.destroy()
 		return nil, fmt.Errorf("failed to marshal conversation messages: %w", err)
 	}
-	prompt, err := s.tokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
+	prompt, err := chatTokenizer.ApplyChatTemplate(msgJSON, toolsJSON, true)
 	if err != nil {
 		run.destroy()
 		return nil, fmt.Errorf("failed to apply chat template: %w", err)
@@ -209,7 +219,7 @@ func (s *Session) setupMTPRun(conv []Message, toolsJSON []byte, mtpModelPath str
 	}
 	run.sequences = &sequences{sequencesPtr: cSequences}
 
-	if err := s.tokenizer.encode(prompt, run.sequences); err != nil {
+	if err := chatTokenizer.encode(prompt, run.sequences); err != nil {
 		run.destroy()
 		return nil, fmt.Errorf("encoding prompt: %w", err)
 	}
@@ -237,7 +247,7 @@ func (s *Session) setupMTPRun(conv []Message, toolsJSON []byte, mtpModelPath str
 		return nil, fmt.Errorf("appending prompt tokens: %w", err)
 	}
 
-	stream, err := s.tokenizer.createTokenizerStream()
+	stream, err := chatTokenizer.createTokenizerStream()
 	if err != nil {
 		run.destroy()
 		return nil, fmt.Errorf("creating tokenizer stream: %w", err)
