@@ -81,6 +81,13 @@ func TestEngineTurnLifecycle(t *testing.T) {
 			t.Fatalf("engine run failed: %v", err)
 		}
 		for _, event := range events {
+			if event.FinishReason == FinishReasonEOS {
+				if event.TerminalTokenID < 0 {
+					t.Error("EOS completion has no terminal token ID")
+				}
+			} else if event.TerminalTokenID != -1 {
+				t.Errorf("non-EOS event terminal token ID = %d, want -1", event.TerminalTokenID)
+			}
 			if event.Request != request {
 				t.Errorf("event request = %p, want %p", event.Request, request)
 			}
@@ -99,7 +106,8 @@ func TestEngineTurnLifecycle(t *testing.T) {
 		t.Fatal("engine did not report a terminal event")
 	}
 
-	cancelledTurnID, err := request.BeginTurn([]int32{1, 2, 3}, options)
+	// The formatted-prompt entry point also supports text-only continuation.
+	cancelledTurnID, err := request.BeginTurnWithImages("Hello", nil, options)
 	if err != nil {
 		t.Fatalf("failed to begin cancellable turn: %v", err)
 	}
@@ -119,6 +127,9 @@ func TestEngineTurnLifecycle(t *testing.T) {
 		for _, event := range events {
 			if event.TurnID == cancelledTurnID && event.Flags&EventFlagTurnFinished != 0 {
 				cancellationReported = true
+				if event.TerminalTokenID != -1 {
+					t.Errorf("cancelled turn terminal token ID = %d, want -1", event.TerminalTokenID)
+				}
 				if event.FinishReason != FinishReasonCancelled {
 					t.Errorf("cancelled turn finish reason = %d, want %d", event.FinishReason, FinishReasonCancelled)
 				}

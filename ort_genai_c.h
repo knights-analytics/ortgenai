@@ -1363,6 +1363,9 @@ OGA_EXPORT OgaResult* OGA_API_CALL OgaEngineEventGetToken(
     const OgaEngineEvent* event, int32_t* out);
 OGA_EXPORT OgaResult* OGA_API_CALL OgaEngineEventGetFinishReason(
     const OgaEngineEvent* event, OgaFinishReason* out);
+/** Returns the sampled EOS token that ended the turn, or -1 for other events. */
+OGA_EXPORT OgaResult* OGA_API_CALL OgaEngineEventGetTerminalTokenId(
+    const OgaEngineEvent* event, int32_t* out);
 /**
  * \brief Reads the caller-facing index into the turn's stop-string list that completed a match.
  *
@@ -1553,6 +1556,13 @@ OGA_EXPORT OgaResult* OGA_API_CALL OgaRequestBeginTurn(
     OgaRequest* request, const OgaTurnOptions* turn_options,
     const int32_t* input_ids, uint64_t input_ids_count,
     uint64_t* out_turn_id);
+
+/** Begins a turn from an already formatted incremental prompt and ordered images.
+ * Images may be null for text-only continuation and may be released after success.
+ * No chat template is applied. Image markers must match the supplied images. */
+OGA_EXPORT OgaResult* OGA_API_CALL OgaRequestBeginTurnWithImages(
+    OgaRequest* request, const OgaTurnOptions* turn_options,
+    const char* formatted_prompt, const OgaImages* images, uint64_t* out_turn_id);
 
 /**
  * \brief Cancels the named queued or active Turn.
@@ -1750,8 +1760,8 @@ OGA_EXPORT const OgaASRPostProcessorTimestampRecord* OGA_API_CALL OgaASRPostProc
 OGA_EXPORT const char* OGA_API_CALL OgaASRPostProcessorTimestampRecordGetText(const OgaASRPostProcessorTimestampRecord* record);
 OGA_EXPORT int64_t OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStartFrame(const OgaASRPostProcessorTimestampRecord* record);
 OGA_EXPORT int64_t OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStopFrame(const OgaASRPostProcessorTimestampRecord* record);
-OGA_EXPORT double OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* record);
-OGA_EXPORT double OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* record);
+OGA_EXPORT int64_t OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* record);
+OGA_EXPORT int64_t OGA_API_CALL OgaASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* record);
 
 OGA_EXPORT OgaResult* OGA_API_CALL OgaTokenizerStreamReset(OgaTokenizerStream* stream);
 OGA_EXPORT OgaResult* OGA_API_CALL OgaTurnOptionsSetDelimitedGuidance(OgaTurnOptions* options, int32_t opening_token, int32_t closing_token, const char* grammar);

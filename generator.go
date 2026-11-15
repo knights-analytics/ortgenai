@@ -14,9 +14,10 @@ import (
 
 // Generator owns a model, generation parameters, and an independent generator state.
 type Generator struct {
-	model  *model
-	params *C.OgaGeneratorParams
-	ptr    *C.OgaGenerator
+	model               *model
+	params              *C.OgaGeneratorParams
+	ptr                 *C.OgaGenerator
+	streamingProcessors map[*StreamingProcessor]struct{}
 }
 
 // SpeculativeStats owns a native immutable statistics snapshot.
@@ -367,6 +368,9 @@ func (g *Generator) Destroy() {
 	if g == nil {
 		return
 	}
+	for processor := range g.streamingProcessors {
+		processor.Destroy()
+	}
 	if g.ptr != nil {
 		C.DestroyOgaGenerator(g.ptr)
 		g.ptr = nil
@@ -394,8 +398,8 @@ type ASRTimestamp struct {
 	Text       string
 	StartFrame int64
 	StopFrame  int64
-	StartTime  float64
-	StopTime   float64
+	StartTime  int64 // Milliseconds from the start of the audio.
+	StopTime   int64 // Milliseconds from the start of the audio.
 }
 
 type ASRResult struct {
@@ -479,7 +483,8 @@ func (p *ASRPostProcessor) Reset() error {
 	return nil
 }
 
-// Results copies all currently available text and word/segment timestamps.
+// Results copies the text and timestamps from the latest ProcessNext or Finalize
+// call. Read them before the next mutation; repeated reads return the same batch.
 func (p *ASRPostProcessor) Results() ([]ASRResult, error) {
 	if err := p.check(); err != nil {
 		return nil, err
@@ -516,8 +521,8 @@ func copyASRTimestamps(timestamps *C.OgaASRPostProcessorTimestampResult, kind C.
 		}
 		values[i].StartFrame = int64(C.ASRPostProcessorTimestampRecordGetStartFrame(record))
 		values[i].StopFrame = int64(C.ASRPostProcessorTimestampRecordGetStopFrame(record))
-		values[i].StartTime = float64(C.ASRPostProcessorTimestampRecordGetStartTime(record))
-		values[i].StopTime = float64(C.ASRPostProcessorTimestampRecordGetStopTime(record))
+		values[i].StartTime = int64(C.ASRPostProcessorTimestampRecordGetStartTime(record))
+		values[i].StopTime = int64(C.ASRPostProcessorTimestampRecordGetStopTime(record))
 	}
 	return values
 }

@@ -36,7 +36,7 @@ Note: This implementation is still alpha so the API may change in future release
 - Go 1.27+
 - Linux with glibc, or 64-bit Windows
 - ONNX Runtime GenAI shared library and dependencies available at runtime:
-  - ORT GenAI `0.19.0` or newer with the explicit engine/request API
+  - ORT GenAI `0.20.0` or newer with the explicit engine/request API
   - Linux: `libonnxruntime-genai.so` and `libonnxruntime.so`
   - Windows: `onnxruntime-genai.dll` and `onnxruntime.dll`
 - A local model directory compatible with ONNX Runtime GenAI (e.g., a converted `Phi-3.5` model folder)
@@ -205,6 +205,74 @@ for {
 
 Token IDs can be supplied directly to `BeginTurn`; `Tokenizer.Encode` and `Tokenizer.Decode` provide copied Go values. Destroy requests, tokenizers, and buffers before shutting down the GenAI environment.
 
+### Engine vision turns
+
+`Request.BeginTurnWithImages(formattedPrompt, images, turnOptions)` accepts an incremental UTF-8 prompt and ordered images. Apply the package's chat template first, with one model-specific image marker per image. The Engine performs image preparation before returning and schedules neural encoding during `Engine.Run`. You may destroy the images after a successful `BeginTurnWithImages` call. Supply `nil` images for a later text-only continuation using the same API.
+
+Use an Engine-compatible vision package, such as a packed Qwen vision export. Ordinary Generator vision exports are not interchangeable. The same owner-thread rules apply as for token turns.
+
+Completed events expose `TerminalTokenID`: the sampled EOS token that ended the turn, or `-1` when no EOS token ended it. It is completion metadata and should not be appended to generated text. `FinishReason` and `MatchedStopStringIndex` remain available separately.
+
+### Chunked streaming ASR
+
+`CreateStreamingASR` owns the model, generator, streaming audio processor, and ASR post-processor for one audio stream. Supply mono float32 PCM at the sample rate specified by the package, with no more than one configured chunk of samples per `Process` call. Calls are synchronous; serialize them on a goroutine pinned with `runtime.LockOSThread`.
+
+Enable timestamps under `model` in `genai_config.json` before loading a compatible Nemotron streaming speech package:
+
+```json
+{
+  "timestamp_level": "all",
+  "segment_separators": [".", "?", "!"],
+  "segment_gap_threshold_seconds": 1.0
+}
+```
+
+Choose `word`, `segment`, `all`, or `off`. `ASRTimestamp.StartTime` and `StopTime` are **int64 milliseconds**, matching ORT GenAI 0.20. Frame indices are also int64. Plain transcript fragments work with timestamps disabled.
+
+After initializing the GenAI environment, the streaming flow is:
+
+```go
+runtime.LockOSThread()
+defer runtime.UnlockOSThread()
+
+stream, err := genai.CreateStreamingASR("./models/nemotron-speech")
+if err != nil { return err }
+defer stream.Destroy()
+
+// VAD requires a compatible VAD configuration in the model package.
+if err := stream.SetOption("use_vad", "false"); err != nil { return err }
+
+// pcmChunks contains mono float32 PCM chunks at the package's sample rate.
+for _, chunk := range pcmChunks {
+    results, err := stream.Process(ctx, chunk)
+    for _, result := range results {
+        fmt.Print(result.Text)
+        // result.Words and result.Segments contain copied timestamp records.
+    }
+    if err != nil { return err }
+}
+results, err := stream.Flush(ctx)
+for _, result := range results { fmt.Print(result.Text) }
+if err != nil { return err }
+```
+
+`Process` can return no results while audio is buffered or VAD skips a chunk. `Flush` pads remaining audio and emits trailing words and segments. A successful flush ends the stream. Results remain valid after later calls or destruction. Append transcript fragments or timestamp-record text to a transcript; appending both duplicates text. Context cancellation is checked between native calls. Destroy a stream after a processing failure and create a new one for new audio.
+
+For direct control, `Generator.NewStreamingProcessor` exposes `Process`, `Flush`, `SetOption`, and `Option`. Pass each non-nil `NamedTensors` result intact to `Generator.SetInputs`, generate until done, and copy `ASRPostProcessor.Results` after **every** `ProcessNext` and `Finalize`. The native processor replaces its result batch on each mutation. Keep the tensor inputs alive until generation for that chunk finishes, then destroy them. Destroy the ASR post-processor before its generator. The generator releases its remaining streaming processors when destroyed.
+
+### GPU memory sizing
+
+`CreateEngineWithOptions` applies per-model CUDA cache-sizing allowances to a package configured with `engine.dynamic_batching`:
+
+```go
+engine, err := genai.CreateEngineWithOptions("./models/qwen", genai.EngineOptions{
+    DeviceMemoryBudgetBytes:   12 << 30,
+    DeviceMemoryHeadroomBytes: 1 << 30,
+})
+```
+
+Zero fields preserve the package settings. Equivalent package JSON fields are `engine.dynamic_batching.device_memory_budget_bytes` and `device_memory_headroom_bytes`. The runtime validates provider and package support. These values guide cache sizing and retained GPU snapshots; they are not hard allocation quotas. Native Qwen and Bolt retain fixed graph caches and apply the allowance to snapshots. Profile headroom with the intended package, context length, and concurrency.
+
 ### Statistics
 
 After generation, inspect `session.GetStatistics()` for fields such as `TokensPerSecond`, cumulative token counts, and prefill timings.
@@ -212,7 +280,7 @@ After generation, inspect `session.GetStatistics()` for fields such as `TokensPe
 
 ## Running tests
 
-Local tests require the matching GenAI shared library and local model directories. Model-dependent tests skip when their fixtures are absent. On Windows, set `ONNXRUNTIME_GENAI_LIB` to the library path before running tests, for example:
+Local tests require the matching GenAI shared library and local model directories. Model-dependent tests skip when their fixtures are absent. On Windows, set `ONNXRUNTIME_DIR` to the directory containing the DLLs before running tests, for example:
 
 - `libonnxruntime-genai.so` on Linux or `onnxruntime-genai.dll` on Windows (adjust via `SetSharedLibraryPath`), and
 - the model directories referenced by the integration tests.
@@ -224,7 +292,7 @@ go test ./...
 ```
 
 ```powershell
-$env:ONNXRUNTIME_GENAI_LIB='C:\ort-lib\onnxruntime-genai.dll'; go test ./...
+$env:ONNXRUNTIME_DIR='E:\ort-lib'; go test ./...
 ```
 
 

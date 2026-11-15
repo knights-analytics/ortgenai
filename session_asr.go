@@ -156,6 +156,7 @@ func (s *Session) runASRConversation(chatTokenizer *tokenizer, ctx context.Conte
 	// the generator it references.
 	defer postProcessor.Destroy()
 
+	var results []ASRResult
 	for !run.generator.IsDone() {
 		select {
 		case <-ctx.Done():
@@ -168,9 +169,19 @@ func (s *Session) runASRConversation(chatTokenizer *tokenizer, ctx context.Conte
 		if err := postProcessor.ProcessNext(); err != nil {
 			return nil, err
 		}
+		// Native results are replaced on every ProcessNext and Finalize call.
+		batch, err := postProcessor.Results()
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, batch...)
 	}
 	if err := postProcessor.Finalize(); err != nil {
 		return nil, err
 	}
-	return postProcessor.Results()
+	trailing, err := postProcessor.Results()
+	if err != nil {
+		return nil, err
+	}
+	return append(results, trailing...), nil
 }

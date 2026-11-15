@@ -393,6 +393,7 @@ uint64_t EngineCapabilitiesGetMaxRequestLength(const OgaEngineCapabilities* capa
 void DestroyEngineCapabilities(OgaEngineCapabilities* capabilities);
 
 OgaResult* CreateNonGenerativeSession(const OgaConfig* config, OgaNonGenerativeSession** out);
+OgaResult* ConfigOverlay(OgaConfig* config, const char* json);
 void DestroyNonGenerativeSession(OgaNonGenerativeSession* session);
 OgaResult* NonGenerativeSessionRunJson(OgaNonGenerativeSession* session, const char* request, size_t request_length, const char** response);
 OgaResult* CreateConfigFromBuffer(const char* config_json, size_t config_json_length, OgaConfig** out);
@@ -415,8 +416,16 @@ const OgaASRPostProcessorTimestampRecord* ASRPostProcessorTimestampResultGetTime
 const char* ASRPostProcessorTimestampRecordGetText(const OgaASRPostProcessorTimestampRecord* record);
 int64_t ASRPostProcessorTimestampRecordGetStartFrame(const OgaASRPostProcessorTimestampRecord* record);
 int64_t ASRPostProcessorTimestampRecordGetStopFrame(const OgaASRPostProcessorTimestampRecord* record);
-double ASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* record);
-double ASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* record);
+int64_t ASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* record);
+int64_t ASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* record);
+OgaResult* RequestBeginTurnWithImages(OgaRequest* request, const OgaTurnOptions* options, const char* formatted_prompt, const OgaImages* images, uint64_t* turn_id);
+OgaResult* EngineEventGetTerminalTokenId(const OgaEngineEvent* event, int32_t* out);
+OgaResult* CreateStreamingProcessor(OgaModel* model, OgaStreamingProcessor** out);
+void DestroyStreamingProcessor(OgaStreamingProcessor* processor);
+OgaResult* StreamingProcessorProcess(OgaStreamingProcessor* processor, const float* samples, size_t count, OgaNamedTensors** out);
+OgaResult* StreamingProcessorFlush(OgaStreamingProcessor* processor, OgaNamedTensors** out);
+OgaResult* StreamingProcessorSetOption(OgaStreamingProcessor* processor, const char* key, const char* value);
+OgaResult* StreamingProcessorGetOption(const OgaStreamingProcessor* processor, const char* key, const char** value);
 OgaResult* TokenizerStreamReset(OgaTokenizerStream* stream);
 OgaResult* TurnOptionsSetDelimitedGuidance(OgaTurnOptions* options, int32_t opening_token, int32_t closing_token, const char* grammar);
 

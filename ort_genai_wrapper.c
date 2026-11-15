@@ -8,7 +8,7 @@ static void logCallbackBridge(const char* message, size_t length) {
 
 static GenAiApiTable g_api = {0}; // api table
 static int g_initialized = 0;
-static void* g_engine_api[150] = {0};
+static void* g_engine_api[159] = {0};
 static int g_engine_initialized = 0;
 
 int SetGenAiApi(void* createModel,
@@ -390,7 +390,7 @@ OgaResult* ProcessOgaImagesAndPrompts(const OgaMultiModalProcessor* processor,  
 
 int SetGenAiEngineApi(void** symbols, size_t count) {
 	if (g_engine_initialized) return 0;
-	if (!symbols || count != 150) return 1;
+	if (!symbols || count != sizeof(g_engine_api) / sizeof(g_engine_api[0])) return 1;
 	for (size_t i = 0; i < count; ++i) {
 		if (!symbols[i]) return 1;
 		g_engine_api[i] = symbols[i];
@@ -546,11 +546,20 @@ const OgaASRPostProcessorTimestampRecord* ASRPostProcessorTimestampResultGetTime
 const char* ASRPostProcessorTimestampRecordGetText(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(142, const char* (*)(const OgaASRPostProcessorTimestampRecord*))(r) : NULL; }
 int64_t ASRPostProcessorTimestampRecordGetStartFrame(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(143, int64_t (*)(const OgaASRPostProcessorTimestampRecord*))(r) : 0; }
 int64_t ASRPostProcessorTimestampRecordGetStopFrame(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(144, int64_t (*)(const OgaASRPostProcessorTimestampRecord*))(r) : 0; }
-double ASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(145, double (*)(const OgaASRPostProcessorTimestampRecord*))(r) : 0; }
-double ASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(146, double (*)(const OgaASRPostProcessorTimestampRecord*))(r) : 0; }
+int64_t ASRPostProcessorTimestampRecordGetStartTime(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(145, int64_t (*)(const OgaASRPostProcessorTimestampRecord*))(r) : 0; }
+int64_t ASRPostProcessorTimestampRecordGetStopTime(const OgaASRPostProcessorTimestampRecord* r) { return g_engine_initialized ? ENGINE_API(146, int64_t (*)(const OgaASRPostProcessorTimestampRecord*))(r) : 0; }
 OgaResult* TokenizerStreamReset(OgaTokenizerStream* s) { return g_engine_initialized ? ENGINE_API(147, OgaResult* (*)(OgaTokenizerStream*))(s) : NULL; }
 OgaResult* TurnOptionsSetDelimitedGuidance(OgaTurnOptions* o, int32_t a, int32_t b, const char* g) { return g_engine_initialized ? ENGINE_API(148, OgaResult* (*)(OgaTurnOptions*, int32_t, int32_t, const char*))(o, a, b, g) : NULL; }
 OgaResult* ConfigAddModelData(OgaConfig* c, const char* f, const void* d, size_t n) { return g_engine_initialized ? ENGINE_API(149, OgaResult* (*)(OgaConfig*, const char*, const void*, size_t))(c, f, d, n) : NULL; }
+OgaResult* RequestBeginTurnWithImages(OgaRequest* r, const OgaTurnOptions* o, const char* p, const OgaImages* i, uint64_t* id) { return g_engine_initialized ? ENGINE_API(150, OgaResult* (*)(OgaRequest*, const OgaTurnOptions*, const char*, const OgaImages*, uint64_t*))(r, o, p, i, id) : NULL; }
+OgaResult* EngineEventGetTerminalTokenId(const OgaEngineEvent* e, int32_t* o) { return g_engine_initialized ? ENGINE_API(151, OgaResult* (*)(const OgaEngineEvent*, int32_t*))(e, o) : NULL; }
+OgaResult* CreateStreamingProcessor(OgaModel* m, OgaStreamingProcessor** o) { return g_engine_initialized ? ENGINE_API(152, OgaResult* (*)(OgaModel*, OgaStreamingProcessor**))(m, o) : NULL; }
+void DestroyStreamingProcessor(OgaStreamingProcessor* p) { if (g_engine_initialized && p) ENGINE_API(153, void (*)(OgaStreamingProcessor*))(p); }
+OgaResult* StreamingProcessorProcess(OgaStreamingProcessor* p, const float* d, size_t n, OgaNamedTensors** o) { return g_engine_initialized ? ENGINE_API(154, OgaResult* (*)(OgaStreamingProcessor*, const float*, size_t, OgaNamedTensors**))(p, d, n, o) : NULL; }
+OgaResult* StreamingProcessorFlush(OgaStreamingProcessor* p, OgaNamedTensors** o) { return g_engine_initialized ? ENGINE_API(155, OgaResult* (*)(OgaStreamingProcessor*, OgaNamedTensors**))(p, o) : NULL; }
+OgaResult* StreamingProcessorSetOption(OgaStreamingProcessor* p, const char* k, const char* v) { return g_engine_initialized ? ENGINE_API(156, OgaResult* (*)(OgaStreamingProcessor*, const char*, const char*))(p, k, v) : NULL; }
+OgaResult* StreamingProcessorGetOption(const OgaStreamingProcessor* p, const char* k, const char** v) { return g_engine_initialized ? ENGINE_API(157, OgaResult* (*)(const OgaStreamingProcessor*, const char*, const char**))(p, k, v) : NULL; }
+OgaResult* ConfigOverlay(OgaConfig* c, const char* j) { return g_engine_initialized ? ENGINE_API(158, OgaResult* (*)(OgaConfig*, const char*))(c, j) : NULL; }
 #undef ENGINE_API
 
 void OgaShutdown(void) {

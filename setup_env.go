@@ -411,6 +411,11 @@ func InitializeGenAiLibrary() error {
 		"OgaASRPostProcessorTimestampRecordGetStartTime", "OgaASRPostProcessorTimestampRecordGetStopTime",
 		"OgaTokenizerStreamReset", "OgaTurnOptionsSetDelimitedGuidance",
 		"OgaConfigAddModelData",
+		"OgaRequestBeginTurnWithImages", "OgaEngineEventGetTerminalTokenId",
+		"OgaCreateStreamingProcessor", "OgaDestroyStreamingProcessor",
+		"OgaStreamingProcessorProcess", "OgaStreamingProcessorFlush",
+		"OgaStreamingProcessorSetOption", "OgaStreamingProcessorGetOption",
+		"OgaConfigOverlay",
 	}
 	engineSymbols := make([]unsafe.Pointer, 0, len(engineSymbolNames))
 	for _, symbolName := range engineSymbolNames {

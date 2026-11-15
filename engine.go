@@ -7,8 +7,10 @@ package ortgenai
 import "C"
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"unsafe"
 )
 
@@ -23,6 +25,14 @@ type Engine struct {
 
 // RequestOptions contains request-scoped resident-session settings.
 type RequestOptions struct{ MaxSessionTokens uint64 }
+
+// EngineOptions controls the per-model CUDA memory allowance used for cache sizing.
+// Zero values preserve the package settings. These are sizing hints, not allocator
+// quotas, and require a package configured with engine.dynamic_batching.
+type EngineOptions struct {
+	DeviceMemoryBudgetBytes   uint64
+	DeviceMemoryHeadroomBytes uint64
+}
 
 // TurnOptions is a reusable set of generation settings bound to one Request.
 type TurnOptions struct {
@@ -80,12 +90,14 @@ const (
 // TurnUsage is a copied snapshot; it remains valid after the next Engine.Run.
 type TurnUsage struct{ PromptTokens, GeneratedTokens, CachedPromptTokens uint64 }
 
-// Event is a copied engine event. Fields not present for an event remain at their zero value.
+// Event is a copied engine event. Fields not present remain at their zero value,
+// except TerminalTokenID, which is -1 unless an EOS token ended the turn.
 type Event struct {
 	Flags                  EventFlags
 	Request                *Request
 	TurnID                 uint64
 	Token                  int32
+	TerminalTokenID        int32
 	FinishReason           FinishReason
 	MatchedStopStringIndex int32
 	ErrorCode              ErrorCode
@@ -115,6 +127,62 @@ func CreateEngine(modelPath string) (*Engine, error) {
 	}
 	if model == nil {
 		return nil, errors.New("model creation returned nil without error")
+	}
+	defer C.DestroyOgaModel(model)
+	return createEngineFromModel(model)
+}
+
+// CreateEngineWithOptions loads a model with application memory sizing settings.
+// Native Qwen and Bolt apply these settings to retained snapshots; fixed graph
+// caches are not resized. Runtime validation checks package and provider support.
+func CreateEngineWithOptions(modelPath string, options EngineOptions) (*Engine, error) {
+	if options == (EngineOptions{}) {
+		return CreateEngine(modelPath)
+	}
+	if !IsInitialized() {
+		return nil, ErrNotInitialized
+	}
+	if modelPath == "" || strings.ContainsRune(modelPath, '\x00') {
+		return nil, errors.New("model path must be non-empty and contain no NUL bytes")
+	}
+	path := C.CString(modelPath)
+	defer C.free(unsafe.Pointer(path))
+	var config *C.OgaConfig
+	if err := OgaResultToError(C.CreateOgaConfig(path, &config)); err != nil {
+		return nil, fmt.Errorf("creating engine config: %w", err)
+	}
+	if config == nil {
+		return nil, errors.New("engine config creation returned nil without error")
+	}
+	defer C.DestroyOgaConfig(config)
+	settings := map[string]uint64{}
+	if options.DeviceMemoryBudgetBytes != 0 {
+		settings["device_memory_budget_bytes"] = options.DeviceMemoryBudgetBytes
+	}
+	if options.DeviceMemoryHeadroomBytes != 0 {
+		settings["device_memory_headroom_bytes"] = options.DeviceMemoryHeadroomBytes
+	}
+	// GenAI parses JSON numbers as doubles, so do not silently round a byte count.
+	for _, bytes := range settings {
+		if bytes > 1<<53-1 {
+			return nil, errors.New("memory byte counts must be at most 2^53-1")
+		}
+	}
+	overlay, err := json.Marshal(map[string]any{"engine": map[string]any{"dynamic_batching": settings}})
+	if err != nil {
+		return nil, err
+	}
+	cOverlay := C.CString(string(overlay))
+	defer C.free(unsafe.Pointer(cOverlay))
+	if err := OgaResultToError(C.ConfigOverlay(config, cOverlay)); err != nil {
+		return nil, fmt.Errorf("setting engine memory allowance: %w", err)
+	}
+	var model *C.OgaModel
+	if err := OgaResultToError(C.CreateOgaModelFromConfig(config, &model)); err != nil {
+		return nil, fmt.Errorf("creating engine model: %w", err)
+	}
+	if model == nil {
+		return nil, errors.New("engine model creation returned nil without error")
 	}
 	defer C.DestroyOgaModel(model)
 	return createEngineFromModel(model)
@@ -374,32 +442,64 @@ func (o *TurnOptions) Reset() error {
 
 // BeginTurn starts generation from token IDs and returns its unique turn ID.
 func (r *Request) BeginTurn(inputIDs []int32, options ...*TurnOptions) (uint64, error) {
-	if r == nil || r.ptr == nil || r.closed {
-		return 0, errors.New("request is closed or destroyed")
-	}
-	if len(options) > 1 {
-		return 0, errors.New("at most one turn options value may be supplied")
-	}
-	var nativeOptions *C.OgaTurnOptions
-	if len(options) == 1 && options[0] != nil {
-		if err := options[0].check(); err != nil {
-			return 0, err
-		}
-		if options[0].request != r {
-			return 0, errors.New("turn options belong to a different request")
-		}
-		nativeOptions = options[0].ptr
+	nativeOptions, err := r.turnOptions(options)
+	if err != nil {
+		return 0, err
 	}
 	if len(inputIDs) == 0 {
 		return 0, errors.New("turn input IDs are empty")
 	}
-	var ids *C.int32_t
-	if len(inputIDs) > 0 {
-		ids = (*C.int32_t)(unsafe.Pointer(&inputIDs[0]))
-	}
 	var id C.uint64_t
-	if err := OgaResultToError(C.RequestBeginTurn(r.ptr, nativeOptions, ids, C.uint64_t(len(inputIDs)), &id)); err != nil {
+	if err := OgaResultToError(C.RequestBeginTurn(r.ptr, nativeOptions, (*C.int32_t)(unsafe.Pointer(&inputIDs[0])), C.uint64_t(len(inputIDs)), &id)); err != nil {
 		return 0, fmt.Errorf("beginning turn: %w", err)
+	}
+	return uint64(id), nil
+}
+
+func (r *Request) turnOptions(options []*TurnOptions) (*C.OgaTurnOptions, error) {
+	if r == nil || r.ptr == nil || r.closed {
+		return nil, errors.New("request is closed or destroyed")
+	}
+	if len(options) > 1 {
+		return nil, errors.New("at most one turn options value may be supplied")
+	}
+	var nativeOptions *C.OgaTurnOptions
+	if len(options) == 1 && options[0] != nil {
+		if err := options[0].check(); err != nil {
+			return nil, err
+		}
+		if options[0].request != r {
+			return nil, errors.New("turn options belong to a different request")
+		}
+		nativeOptions = options[0].ptr
+	}
+	return nativeOptions, nil
+}
+
+// BeginTurnWithImages starts a turn from a formatted incremental UTF-8 prompt.
+// Apply the model's chat template before calling; its image markers must match
+// images in order. A compatible Engine vision package is required. Images may be
+// nil for text-only continuation, and may be destroyed after a successful call.
+func (r *Request) BeginTurnWithImages(prompt string, images *Images, options ...*TurnOptions) (uint64, error) {
+	nativeOptions, err := r.turnOptions(options)
+	if err != nil {
+		return 0, err
+	}
+	if prompt == "" || strings.ContainsRune(prompt, '\x00') {
+		return 0, errors.New("turn prompt must be non-empty and contain no NUL bytes")
+	}
+	var nativeImages *C.OgaImages
+	if images != nil {
+		if images.imagesPtr == nil {
+			return 0, errors.New("images are destroyed")
+		}
+		nativeImages = images.imagesPtr
+	}
+	cPrompt := C.CString(prompt)
+	defer C.free(unsafe.Pointer(cPrompt))
+	var id C.uint64_t
+	if err := OgaResultToError(C.RequestBeginTurnWithImages(r.ptr, nativeOptions, cPrompt, nativeImages, &id)); err != nil {
+		return 0, fmt.Errorf("beginning image turn: %w", err)
 	}
 	return uint64(id), nil
 }
@@ -513,7 +613,7 @@ func (e *Engine) Run(buffer *EventBuffer) ([]Event, error) {
 		if view == nil {
 			continue
 		}
-		var event Event
+		event := Event{TerminalTokenID: -1}
 		var flags C.OgaEngineEventFlags
 		if err := OgaResultToError(C.EngineEventGetFlags(view, &flags)); err != nil {
 			return nil, fmt.Errorf("reading event flags: %w", err)
@@ -546,6 +646,11 @@ func (e *Engine) Run(buffer *EventBuffer) ([]Event, error) {
 				return nil, fmt.Errorf("reading stop-string index: %w", err)
 			}
 			event.FinishReason = FinishReason(reason)
+			var terminal C.int32_t
+			if err := OgaResultToError(C.EngineEventGetTerminalTokenId(view, &terminal)); err != nil {
+				return nil, fmt.Errorf("reading terminal token ID: %w", err)
+			}
+			event.TerminalTokenID = int32(terminal)
 			event.MatchedStopStringIndex = int32(stop)
 			var usage *C.OgaTurnUsage
 			if err := OgaResultToError(C.EngineEventGetUsage(view, (**C.OgaTurnUsage)(unsafe.Pointer(&usage)))); err != nil {
