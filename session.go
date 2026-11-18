@@ -30,19 +30,28 @@ func IsInitialized() bool {
 }
 
 func InitializeEnvironment() error {
+	return initializeEnvironment(InitializeGenAiLibrary)
+}
+
+func initializeEnvironment(initializeLibrary func() error) error {
 	if IsInitialized() {
 		return fmt.Errorf("GenAI environment already initialized")
 	}
-	if err := InitializeGenAiLibrary(); err != nil {
+	if err := initializeLibrary(); err != nil {
 		return fmt.Errorf("error initializing GenAI library: %w", err)
 	}
+	SetTelemetryEnabled(false)
 	genAiEnv = true
 	return nil
 }
 
+var setTelemetryEnabledNative = func(enabled bool) {
+	C.OgaSetTelemetryEnabled(C.bool(enabled))
+}
+
 // SetTelemetryEnabled enables or disables telemetry collection in ORT GenAI.
 func SetTelemetryEnabled(enabled bool) {
-	C.OgaSetTelemetryEnabled(C.bool(enabled))
+	setTelemetryEnabledNative(enabled)
 }
 
 // DestroyEnvironment Call this function to clean up the internal onnxruntime environment when it
